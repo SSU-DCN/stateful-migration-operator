@@ -106,6 +106,18 @@ rules:
   - watch
   - update
   - patch
+# Namespaces for creating stateful-migration namespace
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
 # Events for logging
 - apiGroups:
   - ""

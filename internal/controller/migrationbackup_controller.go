@@ -187,7 +187,7 @@ func (r *MigrationBackupReconciler) ensureStatefulMigrationNamespace(ctx context
 
 	// Check if namespace exists on Karmada control plane
 	var existingNamespace corev1.Namespace
-	err := r.Get(ctx, types.NamespacedName{Name: namespaceName}, &existingNamespace)
+	err := r.KarmadaClient.Get(ctx, types.NamespacedName{Name: namespaceName}, &existingNamespace)
 
 	if errors.IsNotFound(err) {
 		// Create namespace on Karmada control plane
@@ -204,7 +204,7 @@ func (r *MigrationBackupReconciler) ensureStatefulMigrationNamespace(ctx context
 			},
 		}
 
-		if err := r.Create(ctx, namespace); err != nil {
+		if err := r.KarmadaClient.Create(ctx, namespace); err != nil {
 			return fmt.Errorf("failed to create namespace %s on Karmada: %w", namespaceName, err)
 		}
 		log.Info("Successfully created namespace on Karmada", "namespace", namespaceName)
@@ -547,10 +547,10 @@ func (r *MigrationBackupReconciler) reconcileCheckpointBackupForPod(ctx context.
 		},
 	}
 
-	// Set StatefulMigration as owner
-	if err := controllerutil.SetControllerReference(statefulMigration, backup, r.Scheme); err != nil {
-		return err
+	if backup.Labels == nil {
+		backup.Labels = map[string]string{}
 	}
+	backup.Labels["stateful-migration"] = statefulMigration.Name
 
 	// Create or update CheckpointBackup on Karmada control plane (not mgmt cluster)
 	if r.KarmadaClient == nil {
