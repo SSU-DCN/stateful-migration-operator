@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	karmadav1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
+	migrationv1 "github.com/lehuannhatrang/stateful-migration-operator/api/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -65,6 +66,10 @@ func NewKarmadaClient() (*KarmadaClient, error) {
 	}
 	if err := karmadav1alpha1.AddToScheme(karmadaScheme); err != nil {
 		return nil, fmt.Errorf("failed to add Karmada types to scheme: %w", err)
+	}
+	// Register our migration CRD types
+	if err := migrationv1.AddToScheme(karmadaScheme); err != nil {
+		return nil, fmt.Errorf("failed to add migration types to scheme: %w", err)
 	}
 
 	// Create Karmada client

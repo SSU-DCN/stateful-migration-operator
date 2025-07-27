@@ -552,23 +552,33 @@ func (r *MigrationBackupReconciler) reconcileCheckpointBackupForPod(ctx context.
 		return err
 	}
 
-	// Create or update CheckpointBackup
+	// Create or update CheckpointBackup on Karmada control plane (not mgmt cluster)
+	if r.KarmadaClient == nil {
+		return fmt.Errorf("Karmada client not initialized")
+	}
+
 	var existingBackup migrationv1.CheckpointBackup
-	if err := r.Get(ctx, types.NamespacedName{Name: backupName, Namespace: statefulMigration.Namespace}, &existingBackup); err != nil {
-		if errors.IsNotFound(err) {
-			// Create new CheckpointBackup
-			if err := r.Create(ctx, backup); err != nil {
-				return err
-			}
-		} else {
-			return err
+	err := r.KarmadaClient.Get(ctx, types.NamespacedName{Name: backupName, Namespace: statefulMigration.Namespace}, &existingBackup)
+
+	if errors.IsNotFound(err) {
+		// Create new CheckpointBackup on Karmada control plane
+		log := logf.FromContext(ctx)
+		log.Info("Creating CheckpointBackup on Karmada", "name", backupName, "namespace", statefulMigration.Namespace, "cluster", cluster)
+		if err := r.KarmadaClient.Create(ctx, backup); err != nil {
+			return fmt.Errorf("failed to create CheckpointBackup on Karmada: %w", err)
 		}
+		log.Info("Successfully created CheckpointBackup on Karmada", "name", backupName)
+	} else if err != nil {
+		return fmt.Errorf("failed to check CheckpointBackup on Karmada: %w", err)
 	} else {
-		// Update existing CheckpointBackup
+		// Update existing CheckpointBackup on Karmada control plane
+		log := logf.FromContext(ctx)
+		log.Info("Updating CheckpointBackup on Karmada", "name", backupName, "namespace", statefulMigration.Namespace)
 		existingBackup.Spec = backup.Spec
-		if err := r.Update(ctx, &existingBackup); err != nil {
-			return err
+		if err := r.KarmadaClient.Update(ctx, &existingBackup); err != nil {
+			return fmt.Errorf("failed to update CheckpointBackup on Karmada: %w", err)
 		}
+		log.Info("Successfully updated CheckpointBackup on Karmada", "name", backupName)
 	}
 
 	// Create Karmada PropagationPolicy to distribute CheckpointBackup to target cluster
@@ -627,15 +637,19 @@ func (r *MigrationBackupReconciler) createOrUpdatePropagationPolicy(ctx context.
 
 // cleanupOrphanedCheckpointBackups removes CheckpointBackup resources that no longer have corresponding pods
 func (r *MigrationBackupReconciler) cleanupOrphanedCheckpointBackups(ctx context.Context, statefulMigration *migrationv1.StatefulMigration, currentPods []corev1.Pod) error {
-	// Get all CheckpointBackup resources owned by this StatefulMigration
+	if r.KarmadaClient == nil {
+		return fmt.Errorf("Karmada client not initialized")
+	}
+
+	// Get all CheckpointBackup resources owned by this StatefulMigration from Karmada
 	var backupList migrationv1.CheckpointBackupList
-	if err := r.List(ctx, &backupList, &client.ListOptions{
+	if err := r.KarmadaClient.List(ctx, &backupList, &client.ListOptions{
 		Namespace: statefulMigration.Namespace,
 		LabelSelector: labels.SelectorFromSet(map[string]string{
 			"stateful-migration": statefulMigration.Name,
 		}),
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to list CheckpointBackup resources on Karmada: %w", err)
 	}
 
 	// Create a set of current pod names for quick lookup
@@ -659,19 +673,25 @@ func (r *MigrationBackupReconciler) cleanupOrphanedCheckpointBackups(ctx context
 
 // deleteAllCheckpointBackups deletes all CheckpointBackup resources owned by the StatefulMigration
 func (r *MigrationBackupReconciler) deleteAllCheckpointBackups(ctx context.Context, statefulMigration *migrationv1.StatefulMigration) error {
+	if r.KarmadaClient == nil {
+		return fmt.Errorf("Karmada client not initialized")
+	}
+
 	var backupList migrationv1.CheckpointBackupList
-	if err := r.List(ctx, &backupList, &client.ListOptions{
+	if err := r.KarmadaClient.List(ctx, &backupList, &client.ListOptions{
 		Namespace: statefulMigration.Namespace,
 		LabelSelector: labels.SelectorFromSet(map[string]string{
 			"stateful-migration": statefulMigration.Name,
 		}),
 	}); err != nil {
-		return err
+		return fmt.Errorf("failed to list CheckpointBackup resources on Karmada: %w", err)
 	}
 
+	log := logf.FromContext(ctx)
 	for _, backup := range backupList.Items {
-		if err := r.Delete(ctx, &backup); err != nil && !errors.IsNotFound(err) {
-			return err
+		log.Info("Deleting CheckpointBackup from Karmada", "name", backup.Name, "namespace", backup.Namespace)
+		if err := r.KarmadaClient.Delete(ctx, &backup); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete CheckpointBackup from Karmada: %w", err)
 		}
 	}
 
