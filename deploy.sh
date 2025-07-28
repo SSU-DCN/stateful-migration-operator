@@ -233,7 +233,7 @@ deploy_migration_controller() {
     execute_kubectl "$MGMT_KUBECONFIG" apply -f config/crd/bases/
     
     print_step "Applying RBAC..."
-    execute_kubectl "$MGMT_KUBECONFIG" apply -f config/rbac/
+    execute_kubectl "$MGMT_KUBECONFIG" apply -f config/rbac/migration_controller_rbac.yaml
     
     print_step "Deploying MigrationBackup controller..."
     

@@ -276,7 +276,7 @@ kubectl --kubeconfig ~/.kube/karmada delete namespace stateful-migration
 kubectl --kubeconfig ~/.kube/config delete deployment migration-backup-controller -n stateful-migration-operator-system
 
 # Delete RBAC
-kubectl --kubeconfig ~/.kube/config delete -f config/rbac/
+kubectl --kubeconfig ~/.kube/config delete -f config/rbac/migration_controller_rbac.yaml
 
 # Delete CRDs
 kubectl --kubeconfig ~/.kube/config delete -f config/crd/bases/
