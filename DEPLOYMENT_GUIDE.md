@@ -301,6 +301,26 @@ kubectl exec -n stateful-migration <checkpoint-backup-pod> -- curl -k -X POST \
 kubectl get nodes -o jsonpath='{.items[*].status.features.checkpointContainer}'
 ```
 
+#### 7. **Checkpoint API Response Format Issues**
+```bash
+# Common error: "json: cannot unmarshal string into Go struct field CheckpointResponse.items"
+# This indicates the kubelet checkpoint API returns a different format than expected
+
+# Check controller logs for DEBUG messages showing actual API responses
+kubectl logs -n stateful-migration -l app.kubernetes.io/name=checkpoint-backup-controller | grep "DEBUG:"
+
+# Check what checkpoint files are actually created
+kubectl exec -n stateful-migration <checkpoint-backup-pod> -- ls -la /var/lib/kubelet/checkpoints/
+
+# Test the actual kubelet response format
+kubectl exec -n stateful-migration <checkpoint-backup-pod> -- curl -v -k -X POST \
+  -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+  "https://localhost:10250/checkpoint/test-namespace/test-pod/test-container?timeout=60"
+
+# The controller now includes fallback handling for different response formats
+# Check KUBELET_CHECKPOINT_API_DEBUG.md for detailed troubleshooting
+```
+
 ### Debug Commands
 
 ```bash

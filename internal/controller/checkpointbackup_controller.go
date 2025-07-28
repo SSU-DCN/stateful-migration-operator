@@ -50,14 +50,9 @@ const (
 )
 
 // CheckpointResponse represents the response from kubelet checkpoint API
+// The actual response format contains an "items" array with checkpoint file paths
 type CheckpointResponse struct {
-	Items []CheckpointItem `json:"items"`
-}
-
-type CheckpointItem struct {
-	Name           string    `json:"name"`
-	CreatedAt      time.Time `json:"createdAt"`
-	CheckpointPath string    `json:"checkpointPath"`
+	Items []string `json:"items"`
 }
 
 // CheckpointBackupReconciler reconciles a CheckpointBackup object
@@ -82,6 +77,7 @@ type KubeletClient struct {
 type RegistryClient struct {
 	username string
 	password string
+	registry string
 }
 
 // +kubebuilder:rbac:groups=migration.dcnlab.com,resources=checkpointbackups,verbs=get;list;watch;create;update;patch;delete
@@ -218,14 +214,20 @@ func (r *CheckpointBackupReconciler) NewRegistryClient(ctx context.Context) (*Re
 
 	username := string(secret.Data["username"])
 	password := string(secret.Data["password"])
+	registry := string(secret.Data["registry"])
 
 	if username == "" || password == "" {
 		return nil, fmt.Errorf("registry credentials are empty")
 	}
 
+	if registry == "" {
+		registry = "docker.io" // Default to Docker Hub if no registry specified
+	}
+
 	return &RegistryClient{
 		username: username,
 		password: password,
+		registry: registry,
 	}, nil
 }
 
@@ -363,6 +365,21 @@ func (r *CheckpointBackupReconciler) checkpointContainer(ctx context.Context, ba
 		return fmt.Errorf("failed to create checkpoint via kubelet API: %w", err)
 	}
 
+	// Step 1.5: Verify the checkpoint file exists (kubelet API should have returned the exact path)
+	fullCheckpointPath := filepath.Join(CheckpointBasePath, checkpointPath)
+	if _, err := os.Stat(fullCheckpointPath); os.IsNotExist(err) {
+		// If the file doesn't exist, fall back to file search
+		log.Info("Checkpoint file from API response not found, searching for alternative", "expectedPath", checkpointPath)
+		actualCheckpointPath, err := r.findCheckpointFile(backup.Spec.PodRef.Namespace, backup.Spec.PodRef.Name, container.Name, checkpointPath)
+		if err != nil {
+			return fmt.Errorf("failed to find checkpoint file after creation: %w", err)
+		}
+		log.Info("Found alternative checkpoint file", "actualPath", actualCheckpointPath, "originalExpected", checkpointPath)
+		checkpointPath = actualCheckpointPath
+	} else {
+		log.Info("Checkpoint file found as expected", "path", checkpointPath)
+	}
+
 	// Step 2: Get the original container image
 	var baseImage string
 	for _, c := range pod.Spec.Containers {
@@ -412,27 +429,121 @@ func (kc *KubeletClient) CreateCheckpoint(namespace, podName, containerName stri
 		return "", fmt.Errorf("kubelet checkpoint API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
+	// First, try to read the response body to see what we actually get
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read checkpoint response body: %w", err)
+	}
+
+	// Log the raw response for debugging
+	fmt.Printf("DEBUG: Kubelet checkpoint API response body: %s\n", string(body))
+
 	var checkpointResp CheckpointResponse
-	if err := json.NewDecoder(resp.Body).Decode(&checkpointResp); err != nil {
-		return "", fmt.Errorf("failed to decode checkpoint response: %w", err)
+	if err := json.Unmarshal(body, &checkpointResp); err != nil {
+		// If JSON parsing fails, fall back to file search by returning a placeholder
+		responseText := strings.TrimSpace(string(body))
+		fmt.Printf("DEBUG: Failed to parse JSON response from kubelet: %s\n", responseText)
+		return "unknown-checkpoint-file", nil
 	}
 
 	if len(checkpointResp.Items) == 0 {
-		return "", fmt.Errorf("no checkpoint items returned")
+		// If JSON response doesn't contain any items, fall back to file search
+		fmt.Printf("DEBUG: JSON response has no checkpoint items, falling back to file search\n")
+		return "unknown-checkpoint-file", nil
 	}
 
-	return checkpointResp.Items[0].CheckpointPath, nil
+	// Use the first (and likely only) checkpoint path from the response
+	checkpointPath := checkpointResp.Items[0]
+	fmt.Printf("DEBUG: Successfully parsed JSON response, checkpoint path: %s\n", checkpointPath)
+
+	// Convert absolute path to relative path (remove the base path prefix)
+	if strings.HasPrefix(checkpointPath, CheckpointBasePath+"/") {
+		relativePath := strings.TrimPrefix(checkpointPath, CheckpointBasePath+"/")
+		fmt.Printf("DEBUG: Converted to relative path: %s\n", relativePath)
+		return relativePath, nil
+	} else if strings.HasPrefix(checkpointPath, "/var/lib/kubelet/checkpoints/") {
+		relativePath := strings.TrimPrefix(checkpointPath, "/var/lib/kubelet/checkpoints/")
+		fmt.Printf("DEBUG: Converted to relative path: %s\n", relativePath)
+		return relativePath, nil
+	}
+
+	// If path doesn't have expected prefix, just return the filename
+	relativePath := filepath.Base(checkpointPath)
+	fmt.Printf("DEBUG: Using filename only: %s\n", relativePath)
+	return relativePath, nil
+}
+
+// findCheckpointFile finds the most recent checkpoint file for a given pod and container
+func (r *CheckpointBackupReconciler) findCheckpointFile(namespace, podName, containerName, expectedPath string) (string, error) {
+	// First try the expected path
+	fullExpectedPath := filepath.Join(CheckpointBasePath, expectedPath)
+	if _, err := os.Stat(fullExpectedPath); err == nil {
+		return expectedPath, nil
+	}
+
+	// If expected path doesn't exist, search for checkpoint files matching the pattern
+	podFullName := fmt.Sprintf("%s_%s", namespace, podName)
+	pattern := fmt.Sprintf("checkpoint-%s-%s-*.tar", podFullName, containerName)
+	fullPattern := filepath.Join(CheckpointBasePath, pattern)
+
+	fmt.Printf("DEBUG: Searching for checkpoint files with pattern: %s\n", fullPattern)
+	matches, err := filepath.Glob(fullPattern)
+	if err != nil {
+		return "", fmt.Errorf("failed to search for checkpoint files with pattern %s: %w", pattern, err)
+	}
+	fmt.Printf("DEBUG: Found %d matching files: %v\n", len(matches), matches)
+
+	if len(matches) == 0 {
+		// List all files in checkpoint directory for debugging
+		files, _ := os.ReadDir(CheckpointBasePath)
+		var fileNames []string
+		for _, file := range files {
+			fileNames = append(fileNames, file.Name())
+		}
+		return "", fmt.Errorf("no checkpoint files found for pattern %s. Available files: %v", pattern, fileNames)
+	}
+
+	// Sort matches to get the most recent file (files are naturally sorted by timestamp)
+	// Find the most recent file (look for files created in the last few seconds)
+	var mostRecentFile string
+	var mostRecentTime time.Time
+
+	now := time.Now()
+	for _, match := range matches {
+		info, err := os.Stat(match)
+		if err != nil {
+			continue
+		}
+
+		// Only consider files created in the last 30 seconds (recent checkpoint)
+		if now.Sub(info.ModTime()) < 30*time.Second {
+			if info.ModTime().After(mostRecentTime) {
+				mostRecentTime = info.ModTime()
+				mostRecentFile = match
+			}
+		}
+	}
+
+	if mostRecentFile == "" {
+		// If no recent file found, use the lexicographically last one (likely most recent by timestamp)
+		mostRecentFile = matches[len(matches)-1]
+	}
+
+	relativePath, _ := filepath.Rel(CheckpointBasePath, mostRecentFile)
+	return relativePath, nil
 }
 
 // buildCheckpointImage builds the checkpoint image using buildah
 func (r *CheckpointBackupReconciler) buildCheckpointImage(checkpointPath, imageName, baseImage, containerName string) error {
 	log := logf.FromContext(context.Background())
 
-	// Verify checkpoint file exists
+	// Verify the checkpoint file exists (should have been found by findCheckpointFile)
 	fullCheckpointPath := filepath.Join(CheckpointBasePath, checkpointPath)
 	if _, err := os.Stat(fullCheckpointPath); os.IsNotExist(err) {
-		return fmt.Errorf("checkpoint file does not exist: %s", fullCheckpointPath)
+		return fmt.Errorf("checkpoint file does not exist: %s (this should not happen after findCheckpointFile)", fullCheckpointPath)
 	}
+
+	log.Info("Building checkpoint image", "checkpointFile", fullCheckpointPath, "imageName", imageName, "baseImage", baseImage)
 
 	// Step 1: Create new container from scratch
 	cmd := exec.Command("buildah", "from", "scratch")
@@ -449,7 +560,7 @@ func (r *CheckpointBackupReconciler) buildCheckpointImage(checkpointPath, imageN
 
 	// Step 2: Add checkpoint tar to root
 	if err := exec.Command("buildah", "add", newContainer, fullCheckpointPath, "/").Run(); err != nil {
-		return fmt.Errorf("failed to add checkpoint to container: %w", err)
+		return fmt.Errorf("failed to add checkpoint to container (%s): %w", fullCheckpointPath, err)
 	}
 
 	// Step 3: Add CRI-O checkpoint annotations
@@ -492,18 +603,13 @@ func (rc *RegistryClient) PushImage(imageName string) error {
 
 // login performs registry authentication
 func (rc *RegistryClient) login(imageName string) error {
-	// Extract registry from image name
-	parts := strings.Split(imageName, "/")
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid image name format: %s", imageName)
-	}
-
-	registry := parts[0]
+	// Use the registry URL from the secret (not extracted from image name)
+	// For Docker Hub, this should be "docker.io" or can be empty
 
 	// Login using buildah
-	cmd := exec.Command("buildah", "login", "-u", rc.username, "-p", rc.password, registry)
+	cmd := exec.Command("buildah", "login", "-u", rc.username, "-p", rc.password, rc.registry)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to login to registry %s: %w", registry, err)
+		return fmt.Errorf("failed to login to registry %s: %w", rc.registry, err)
 	}
 
 	return nil
