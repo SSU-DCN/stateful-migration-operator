@@ -276,8 +276,29 @@ kubectl get serviceaccount checkpoint-backup-sa -n stateful-migration
 # Check if controller can access CheckpointBackup CRD
 kubectl auth can-i list checkpointbackups.migration.dcnlab.com --as=system:serviceaccount:stateful-migration:checkpoint-backup-sa
 
+# Check if controller can access kubelet checkpoint API
+kubectl auth can-i create nodes/checkpoint --as=system:serviceaccount:stateful-migration:checkpoint-backup-sa
+
 # If RBAC is missing, manually apply and propagate
 kubectl --kubeconfig ~/.kube/karmada apply -f config/rbac/checkpoint_backup_rbac.yaml
+```
+
+#### 6. **Kubelet Checkpoint API Issues**
+```bash
+# Common error: "kubelet checkpoint API returned status 403: Forbidden"
+# This indicates missing permissions for nodes/checkpoint
+
+# Check if controller has node checkpoint permissions
+kubectl auth can-i create nodes/checkpoint --as=system:serviceaccount:stateful-migration:checkpoint-backup-sa
+kubectl auth can-i get nodes --as=system:serviceaccount:stateful-migration:checkpoint-backup-sa
+
+# Test kubelet checkpoint API directly from controller pod
+kubectl exec -n stateful-migration <checkpoint-backup-pod> -- curl -k -X POST \
+  -H "Authorization: Bearer $(kubectl exec -n stateful-migration <checkpoint-backup-pod> -- cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+  https://localhost:10250/checkpoint/test-namespace/test-pod/test-container
+
+# Check if kubelet checkpoint feature is enabled on nodes
+kubectl get nodes -o jsonpath='{.items[*].status.features.checkpointContainer}'
 ```
 
 ### Debug Commands
