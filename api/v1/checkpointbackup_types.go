@@ -48,8 +48,25 @@ type CheckpointBackupSpec struct {
 
 // CheckpointBackupStatus defines the observed state of CheckpointBackup.
 type CheckpointBackupStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Phase represents the current phase of the checkpoint backup operation
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// LastCheckpointTime represents the last time a checkpoint was successfully created
+	// +optional
+	LastCheckpointTime *metav1.Time `json:"lastCheckpointTime,omitempty"`
+
+	// Message provides additional information about the current state
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// ObservedGeneration reflects the generation of the most recently observed CheckpointBackup
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions represent the latest available observations of the CheckpointBackup's current state
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -543,7 +543,7 @@ func (r *MigrationBackupReconciler) reconcileCheckpointBackupForPod(ctx context.
 			},
 			ResourceRef: statefulMigration.Spec.ResourceRef,
 			Registry:    statefulMigration.Spec.Registry,
-			Containers:  r.extractContainerInfo(pod),
+			Containers:  r.extractContainerInfo(pod, statefulMigration.Spec.Registry),
 		},
 	}
 
@@ -586,13 +586,13 @@ func (r *MigrationBackupReconciler) reconcileCheckpointBackupForPod(ctx context.
 }
 
 // extractContainerInfo extracts container information from a pod
-func (r *MigrationBackupReconciler) extractContainerInfo(pod *corev1.Pod) []migrationv1.Container {
+func (r *MigrationBackupReconciler) extractContainerInfo(pod *corev1.Pod, registry migrationv1.Registry) []migrationv1.Container {
 	var containers []migrationv1.Container
 
 	for _, container := range pod.Spec.Containers {
 		containers = append(containers, migrationv1.Container{
 			Name:  container.Name,
-			Image: container.Image,
+			Image: fmt.Sprintf("%s:%s_%s", registry.Repository, pod.Name, container.Name),
 		})
 	}
 

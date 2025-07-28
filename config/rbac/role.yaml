@@ -26,10 +26,20 @@ rules:
   - ""
   resources:
   - pods
+  - secrets
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/checkpoint
+  verbs:
+  - create
+  - patch
+  - proxy
+  - update
 - apiGroups:
   - apps
   resources:

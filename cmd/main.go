@@ -65,6 +65,9 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var enableCheckpointBackupController bool
+	var enableMigrationBackupController bool
+	var enableMigrationRestoreController bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -74,6 +77,12 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
+	flag.BoolVar(&enableCheckpointBackupController, "enable-checkpoint-backup-controller", false,
+		"Enable the CheckpointBackup controller (runs as DaemonSet on member clusters).")
+	flag.BoolVar(&enableMigrationBackupController, "enable-migration-backup-controller", true,
+		"Enable the MigrationBackup controller (runs on Karmada control plane).")
+	flag.BoolVar(&enableMigrationRestoreController, "enable-migration-restore-controller", true,
+		"Enable the MigrationRestore controller (runs on Karmada control plane).")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
 	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
 	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
@@ -204,25 +213,43 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.CheckpointBackupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "CheckpointBackup")
-		os.Exit(1)
+	// Setup controllers based on flags
+	if enableCheckpointBackupController {
+		setupLog.Info("Setting up CheckpointBackup controller")
+		if err := (&controller.CheckpointBackupReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "CheckpointBackup")
+			os.Exit(1)
+		}
 	}
-	if err := (&controller.MigrationBackupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "MigrationBackup")
-		os.Exit(1)
+
+	if enableMigrationBackupController {
+		setupLog.Info("Setting up MigrationBackup controller")
+		if err := (&controller.MigrationBackupReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "MigrationBackup")
+			os.Exit(1)
+		}
 	}
-	if err := (&controller.MigrationRestoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "MigrationRestore")
+
+	if enableMigrationRestoreController {
+		setupLog.Info("Setting up MigrationRestore controller")
+		if err := (&controller.MigrationRestoreReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "MigrationRestore")
+			os.Exit(1)
+		}
+	}
+
+	// Ensure at least one controller is enabled
+	if !enableCheckpointBackupController && !enableMigrationBackupController && !enableMigrationRestoreController {
+		setupLog.Error(nil, "At least one controller must be enabled")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
