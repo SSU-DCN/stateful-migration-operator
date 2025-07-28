@@ -55,6 +55,11 @@ VERSION="$DEFAULT_VERSION"
 MEMBER_CLUSTERS=()
 DRY_RUN=false
 
+# Registry credentials
+REGISTRY_USERNAME=""
+REGISTRY_PASSWORD=""
+REGISTRY_URL=""
+
 # Function to show usage
 show_usage() {
     echo "Deployment Script for Stateful Migration Operator Controllers"
@@ -71,6 +76,9 @@ show_usage() {
     echo "  -g, --mgmt-config PATH        Path to management cluster kubeconfig file"
     echo "  -l, --clusters CLUSTER1,CLUSTER2  Comma-separated list of member cluster names"
     echo "  -d, --dry-run                 Show what would be deployed without actually deploying"
+    echo "  -u, --registry-username USER  Registry username (will prompt if not provided for checkpoint deployment)"
+    echo "  -p, --registry-password PASS  Registry password (will prompt if not provided for checkpoint deployment)"
+    echo "  -r, --registry-url URL        Registry URL (optional, defaults to Docker Hub)"
     echo "  -h, --help                    Show this help message"
     echo
     echo "Examples:"
@@ -83,8 +91,11 @@ show_usage() {
     echo "  # Deploy only MigrationBackup controller"
     echo "  $0 --migration --mgmt-config ~/.kube/config"
     echo
-    echo "  # Deploy with custom version"
-    echo "  $0 --all --version v1.17 --karmada-config ~/.kube/karmada --mgmt-config ~/.kube/config --clusters cluster1,cluster2"
+    echo "  # Deploy with custom version and registry credentials"
+    echo "  $0 --all --version v1.17 --karmada-config ~/.kube/karmada --mgmt-config ~/.kube/config --clusters cluster1,cluster2 --registry-username myuser --registry-url myregistry.com"
+    echo
+    echo "  # Deploy CheckpointBackup with interactive credential prompt"
+    echo "  $0 --checkpoint --karmada-config ~/.kube/karmada --clusters cluster1,cluster2  # Will prompt for credentials"
     echo
     echo "Prerequisites:"
     echo "  - Karmada control plane accessible"
@@ -129,6 +140,18 @@ parse_arguments() {
             -d|--dry-run)
                 DRY_RUN=true
                 shift
+                ;;
+            -u|--registry-username)
+                REGISTRY_USERNAME="$2"
+                shift 2
+                ;;
+            -p|--registry-password)
+                REGISTRY_PASSWORD="$2"
+                shift 2
+                ;;
+            -r|--registry-url)
+                REGISTRY_URL="$2"
+                shift 2
                 ;;
             -h|--help)
                 show_usage
@@ -217,6 +240,94 @@ execute_kubectl() {
     else
         eval "$cmd"
     fi
+}
+
+# Prompt for registry credentials if not provided
+prompt_registry_credentials() {
+    if [[ -z "$REGISTRY_USERNAME" ]]; then
+        read -p "Enter registry username: " REGISTRY_USERNAME
+    fi
+    
+    if [[ -z "$REGISTRY_PASSWORD" ]]; then
+        read -s -p "Enter registry password: " REGISTRY_PASSWORD
+        echo
+    fi
+    
+    if [[ -z "$REGISTRY_URL" ]]; then
+        read -p "Enter registry URL (press Enter for Docker Hub): " REGISTRY_URL
+        if [[ -z "$REGISTRY_URL" ]]; then
+            REGISTRY_URL="docker.io"
+        fi
+    fi
+    
+    # Validate credentials
+    if [[ -z "$REGISTRY_USERNAME" || -z "$REGISTRY_PASSWORD" ]]; then
+        print_error "Registry username and password are required for CheckpointBackup deployment"
+        return 1
+    fi
+    
+    print_success "Registry credentials configured for: $REGISTRY_URL"
+}
+
+# Create registry credentials secret and propagation policy
+create_registry_credentials() {
+    print_step "Creating registry credentials secret..."
+    
+    # Base64 encode credentials
+    local username_b64=$(echo -n "$REGISTRY_USERNAME" | base64 -w 0)
+    local password_b64=$(echo -n "$REGISTRY_PASSWORD" | base64 -w 0)
+    local registry_b64=$(echo -n "$REGISTRY_URL" | base64 -w 0)
+    
+    # Create secret manifest
+    cat > /tmp/registry-credentials.yaml <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-credentials
+  namespace: $NAMESPACE
+  labels:
+    app.kubernetes.io/name: registry-credentials
+    app.kubernetes.io/part-of: stateful-migration-operator
+    checkpoint-migration.dcn.io: "true"
+type: Opaque
+data:
+  username: $username_b64
+  password: $password_b64
+  registry: $registry_b64
+EOF
+    
+    # Apply secret to Karmada
+    execute_kubectl "$KARMADA_KUBECONFIG" apply -f /tmp/registry-credentials.yaml
+    
+    # Create PropagationPolicy for registry credentials
+    cat > /tmp/registry-credentials-propagation.yaml <<EOF
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: registry-credentials-propagation
+  namespace: $NAMESPACE
+  labels:
+    app.kubernetes.io/name: registry-credentials
+    app.kubernetes.io/part-of: stateful-migration-operator
+spec:
+  resourceSelectors:
+  - apiVersion: v1
+    kind: Secret
+    name: registry-credentials
+  placement:
+    clusterAffinity:
+      clusterNames:
+$(printf '      - %s\n' "${MEMBER_CLUSTERS[@]}")
+EOF
+    
+    execute_kubectl "$KARMADA_KUBECONFIG" apply -f /tmp/registry-credentials-propagation.yaml
+    
+    # Clean up temp files
+    if [[ "$DRY_RUN" == false ]]; then
+        rm -f /tmp/registry-credentials.yaml /tmp/registry-credentials-propagation.yaml
+    fi
+    
+    print_success "Registry credentials secret created and propagated"
 }
 
 # Deploy MigrationBackup controller to management cluster
@@ -398,9 +509,16 @@ EOF
     execute_kubectl "$KARMADA_KUBECONFIG" apply -f /tmp/cluster-rbac-propagation.yaml
     rm -f /tmp/cluster-rbac-propagation.yaml
     
+    # Setup registry credentials
+    if ! prompt_registry_credentials; then
+        return 1
+    fi
+    
+    create_registry_credentials
+    
     if [[ "$DRY_RUN" == false ]]; then
-        print_step "Waiting for RBAC propagation to complete..."
-        sleep 10  # Give some time for propagation
+        print_step "Waiting for RBAC and secrets propagation to complete..."
+        sleep 15  # Give some time for propagation
         
         # Verify RBAC propagation on first cluster
         local first_cluster="${MEMBER_CLUSTERS[0]}"
@@ -410,6 +528,13 @@ EOF
             print_warning "ClusterRole may not be fully propagated yet. Deployment may need time to start properly."
         else
             print_success "RBAC appears to be propagated successfully"
+        fi
+        
+        print_status "Verifying registry credentials on cluster: $first_cluster"
+        if ! execute_kubectl "$KARMADA_KUBECONFIG" get secret registry-credentials -n "$NAMESPACE" --context="$first_cluster" >/dev/null 2>&1; then
+            print_warning "Registry credentials may not be fully propagated yet."
+        else
+            print_success "Registry credentials appear to be propagated successfully"
         fi
     fi
     
@@ -612,15 +737,17 @@ show_next_steps() {
     if [[ "$DEPLOY_CHECKPOINT" == true ]]; then
         echo
         print_status "For CheckpointBackup controller:"
-        echo "1. Ensure registry credentials are configured:"
-        echo "   kubectl --kubeconfig=$KARMADA_KUBECONFIG apply -f config/checkpoint-backup/registry-credentials-secret.yaml"
+        echo "1. ✅ Registry credentials configured automatically for: $REGISTRY_URL"
+        echo "   Username: $REGISTRY_USERNAME"
         echo
-        echo "2. Update registry credentials with actual values"
-        echo
-        echo "3. Create PropagationPolicy for registry credentials to member clusters"
-        echo
-        echo "4. Verify DaemonSet is running on member clusters:"
+        echo "2. Verify DaemonSet is running on member clusters:"
         echo "   kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=checkpoint-backup-controller"
+        echo
+        echo "3. Check registry credentials propagation:"
+        echo "   kubectl get secret registry-credentials -n $NAMESPACE"
+        echo
+        echo "4. Test checkpoint backup functionality:"
+        echo "   kubectl get checkpointbackups -A"
     fi
     
     if [[ "$DEPLOY_MIGRATION" == true ]]; then

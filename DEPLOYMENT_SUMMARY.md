@@ -24,6 +24,15 @@ The `deploy.sh` script provides **one-command deployment** for both controllers:
 ./deploy.sh --checkpoint \
   --karmada-config ~/.kube/karmada \
   --clusters cluster1,cluster2
+# Will prompt for registry credentials interactively
+
+# Or provide credentials via flags:
+./deploy.sh --checkpoint \
+  --karmada-config ~/.kube/karmada \
+  --clusters cluster1,cluster2 \
+  --registry-username myuser \
+  --registry-url myregistry.com
+# Will prompt for password only
 ```
 
 #### Deploy Only MigrationBackup (Management)
@@ -46,6 +55,7 @@ The `deploy.sh` script provides **one-command deployment** for both controllers:
 - ✅ Namespace: `stateful-migration`
 - ✅ CRD: `checkpointbackups.migration.dcnlab.com`
 - ✅ RBAC: Service account + cluster permissions
+- ✅ Registry Credentials: Automatically created and propagated
 - ✅ DaemonSet: Buildah-enabled controller
 - ✅ PropagationPolicies: Distributes to member clusters
 - ✅ Image: `lehuannhatrang/stateful-migration-operator:checkpointBackup_<VERSION>`
@@ -61,6 +71,7 @@ The `deploy.sh` script provides **one-command deployment** for both controllers:
 - 🎯 **Selective Deployment**: Choose which controllers to deploy
 - 🔍 **Dry Run Mode**: Preview changes before applying
 - 📝 **Version Control**: Specify image versions
+- 🔐 **Automatic Registry Setup**: Interactive credential prompts and secret creation
 - 🛡️ **Validation**: Checks prerequisites and connectivity
 - 🎨 **Colored Output**: Clear status and progress indicators
 - 📊 **Status Reporting**: Shows deployment results

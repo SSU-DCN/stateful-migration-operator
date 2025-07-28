@@ -141,12 +141,27 @@ kubectl get daemonset checkpoint-backup-controller -n stateful-migration
 kubectl get pods -n stateful-migration -l app.kubernetes.io/name=checkpoint-backup-controller
 ```
 
-### 2. Configure Registry Credentials
+### 2. Registry Credentials (Automatic)
+The deployment script automatically prompts for and configures registry credentials:
+
 ```bash
-# Apply registry credentials template (update with real credentials first)
+# Registry credentials are configured automatically during deployment
+# The script will prompt for:
+#   - Registry username
+#   - Registry password  
+#   - Registry URL (optional, defaults to Docker Hub)
+
+# Verify registry credentials were created and propagated
+kubectl --kubeconfig ~/.kube/karmada get secret registry-credentials -n stateful-migration
+kubectl get secret registry-credentials -n stateful-migration  # On member clusters
+```
+
+**Manual Registry Configuration (if needed):**
+```bash
+# Only if you need to update credentials manually
 kubectl --kubeconfig ~/.kube/karmada apply -f config/checkpoint-backup/registry-credentials-secret.yaml
 
-# Create PropagationPolicy for registry credentials
+# Create PropagationPolicy manually  
 kubectl --kubeconfig ~/.kube/karmada apply -f - <<EOF
 apiVersion: policy.karmada.io/v1alpha1
 kind: PropagationPolicy
