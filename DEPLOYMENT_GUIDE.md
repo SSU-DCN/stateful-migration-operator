@@ -244,6 +244,27 @@ kubectl exec -n stateful-migration <pod-name> -- buildah login your-registry.com
 kubectl get secret registry-credentials -n stateful-migration
 ```
 
+#### 5. **RBAC Permission Issues**
+```bash
+# Check if RBAC resources are propagated to member clusters
+kubectl --kubeconfig ~/.kube/karmada get clusterpropagationpolicy checkpoint-backup-cluster-rbac
+
+# Verify ClusterRole exists on member cluster
+kubectl get clusterrole checkpoint-backup-role
+
+# Verify ClusterRoleBinding exists on member cluster  
+kubectl get clusterrolebinding checkpoint-backup-rolebinding
+
+# Verify ServiceAccount exists on member cluster
+kubectl get serviceaccount checkpoint-backup-sa -n stateful-migration
+
+# Check if controller can access CheckpointBackup CRD
+kubectl auth can-i list checkpointbackups.migration.dcnlab.com --as=system:serviceaccount:stateful-migration:checkpoint-backup-sa
+
+# If RBAC is missing, manually apply and propagate
+kubectl --kubeconfig ~/.kube/karmada apply -f config/rbac/checkpoint_backup_rbac.yaml
+```
+
 ### Debug Commands
 
 ```bash
@@ -263,11 +284,12 @@ kubectl exec -n stateful-migration <pod-name> -- curl -k https://localhost:10250
 ```bash
 # Delete PropagationPolicies
 kubectl --kubeconfig ~/.kube/karmada delete propagationpolicy -n stateful-migration --all
+kubectl --kubeconfig ~/.kube/karmada delete clusterpropagationpolicy checkpoint-backup-cluster-rbac
 
 # Delete DaemonSet
 kubectl --kubeconfig ~/.kube/karmada delete daemonset checkpoint-backup-controller -n stateful-migration
 
-# Delete RBAC
+# Delete RBAC from Karmada
 kubectl --kubeconfig ~/.kube/karmada delete -f config/rbac/checkpoint_backup_rbac.yaml
 
 # Delete namespace

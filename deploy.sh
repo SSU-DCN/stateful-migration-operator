@@ -354,18 +354,35 @@ EOF
     print_step "Applying RBAC to Karmada..."
     execute_kubectl "$KARMADA_KUBECONFIG" apply -f config/rbac/checkpoint_backup_rbac.yaml
     
-    print_step "Creating PropagationPolicy for RBAC..."
-    cat > /tmp/rbac-propagation.yaml <<EOF
+    print_step "Creating PropagationPolicy for ServiceAccount..."
+    cat > /tmp/serviceaccount-propagation.yaml <<EOF
 apiVersion: policy.karmada.io/v1alpha1
 kind: PropagationPolicy
 metadata:
-  name: checkpoint-backup-rbac
+  name: checkpoint-backup-serviceaccount
   namespace: $NAMESPACE
 spec:
   resourceSelectors:
   - apiVersion: v1
     kind: ServiceAccount
     name: checkpoint-backup-sa
+  placement:
+    clusterAffinity:
+      clusterNames:
+$(printf '      - %s\n' "${MEMBER_CLUSTERS[@]}")
+EOF
+    
+    execute_kubectl "$KARMADA_KUBECONFIG" apply -f /tmp/serviceaccount-propagation.yaml
+    rm -f /tmp/serviceaccount-propagation.yaml
+    
+    print_step "Creating ClusterPropagationPolicy for cluster-scoped RBAC..."
+    cat > /tmp/cluster-rbac-propagation.yaml <<EOF
+apiVersion: policy.karmada.io/v1alpha1
+kind: ClusterPropagationPolicy
+metadata:
+  name: checkpoint-backup-cluster-rbac
+spec:
+  resourceSelectors:
   - apiVersion: rbac.authorization.k8s.io/v1
     kind: ClusterRole
     name: checkpoint-backup-role
@@ -378,8 +395,23 @@ spec:
 $(printf '      - %s\n' "${MEMBER_CLUSTERS[@]}")
 EOF
     
-    execute_kubectl "$KARMADA_KUBECONFIG" apply -f /tmp/rbac-propagation.yaml
-    rm -f /tmp/rbac-propagation.yaml
+    execute_kubectl "$KARMADA_KUBECONFIG" apply -f /tmp/cluster-rbac-propagation.yaml
+    rm -f /tmp/cluster-rbac-propagation.yaml
+    
+    if [[ "$DRY_RUN" == false ]]; then
+        print_step "Waiting for RBAC propagation to complete..."
+        sleep 10  # Give some time for propagation
+        
+        # Verify RBAC propagation on first cluster
+        local first_cluster="${MEMBER_CLUSTERS[0]}"
+        print_status "Verifying RBAC on cluster: $first_cluster"
+        
+        if ! execute_kubectl "$KARMADA_KUBECONFIG" get clusterrole checkpoint-backup-role --context="$first_cluster" >/dev/null 2>&1; then
+            print_warning "ClusterRole may not be fully propagated yet. Deployment may need time to start properly."
+        else
+            print_success "RBAC appears to be propagated successfully"
+        fi
+    fi
     
     print_step "Creating updated DaemonSet with correct image..."
     cat > /tmp/checkpoint-daemonset.yaml <<EOF
