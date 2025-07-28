@@ -111,10 +111,11 @@ The deployment script (`deploy.sh`) handles:
 ### MigrationBackup Controller (Management Cluster)
 
 #### 🏗️ **Resources Created**
-1. **Namespace**: `stateful-migration-operator-system`
+1. **Namespace**: `stateful-migration`
 2. **CRDs**: All migration-related CRDs
-3. **RBAC**: Controller manager service account and permissions
+3. **RBAC**: Service account and permissions (follows deploy/all-in-one.yaml pattern)
 4. **Deployment**: MigrationBackup controller
+5. **Service**: Metrics and health endpoints
 
 #### 📦 **Container Image**
 - `lehuannhatrang/stateful-migration-operator:migrationBackup_<VERSION>`
@@ -168,13 +169,16 @@ EOF
 ### 3. Verify MigrationBackup Controller
 ```bash
 # Check deployment
-kubectl --kubeconfig ~/.kube/config get deployment migration-backup-controller -n stateful-migration-operator-system
+kubectl --kubeconfig ~/.kube/config get deployment migration-backup-controller -n stateful-migration
 
-# Check pods
-kubectl --kubeconfig ~/.kube/config get pods -n stateful-migration-operator-system
+# Check pods  
+kubectl --kubeconfig ~/.kube/config get pods -n stateful-migration -l app.kubernetes.io/name=migration-backup-controller
 
 # Check logs
-kubectl --kubeconfig ~/.kube/config logs -n stateful-migration-operator-system -l control-plane=controller-manager
+kubectl --kubeconfig ~/.kube/config logs -n stateful-migration deployment/migration-backup-controller -f
+
+# Check service
+kubectl --kubeconfig ~/.kube/config get svc -n stateful-migration migration-backup-controller-metrics
 ```
 
 ### 4. Test the Setup
@@ -272,17 +276,26 @@ kubectl --kubeconfig ~/.kube/karmada delete namespace stateful-migration
 
 ### Remove MigrationBackup Controller
 ```bash
-# Delete deployment
-kubectl --kubeconfig ~/.kube/config delete deployment migration-backup-controller -n stateful-migration-operator-system
+# Delete all resources from all-in-one manifest (recommended)
+kubectl --kubeconfig ~/.kube/config delete -f deploy/all-in-one.yaml
+
+# Or delete individual components:
+# Delete deployment and service
+kubectl --kubeconfig ~/.kube/config delete deployment migration-backup-controller -n stateful-migration
+kubectl --kubeconfig ~/.kube/config delete svc migration-backup-controller-metrics -n stateful-migration
 
 # Delete RBAC
-kubectl --kubeconfig ~/.kube/config delete -f config/rbac/migration_controller_rbac.yaml
+kubectl --kubeconfig ~/.kube/config delete clusterrole migration-backup-controller-role
+kubectl --kubeconfig ~/.kube/config delete clusterrolebinding migration-backup-controller-rolebinding
+kubectl --kubeconfig ~/.kube/config delete role migration-backup-leader-election-role -n stateful-migration
+kubectl --kubeconfig ~/.kube/config delete rolebinding migration-backup-leader-election-rolebinding -n stateful-migration
+kubectl --kubeconfig ~/.kube/config delete serviceaccount migration-backup-controller -n stateful-migration
 
-# Delete CRDs
+# Delete CRDs (only if not used by other controllers)
 kubectl --kubeconfig ~/.kube/config delete -f config/crd/bases/
 
-# Delete namespace
-kubectl --kubeconfig ~/.kube/config delete namespace stateful-migration-operator-system
+# Delete namespace (only if not used by CheckpointBackup controllers)
+kubectl --kubeconfig ~/.kube/config delete namespace stateful-migration
 ```
 
 ## Advanced Configuration

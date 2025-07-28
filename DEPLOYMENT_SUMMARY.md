@@ -51,10 +51,10 @@ The `deploy.sh` script provides **one-command deployment** for both controllers:
 - ✅ Image: `lehuannhatrang/stateful-migration-operator:checkpointBackup_<VERSION>`
 
 #### ✅ **MigrationBackup Controller (Management Cluster)**
-- ✅ Namespace: `stateful-migration-operator-system`
+- ✅ Namespace: `stateful-migration`
 - ✅ CRDs: All migration CRDs
-- ✅ RBAC: Controller manager permissions
-- ✅ Deployment: Management controller
+- ✅ RBAC: Service account and cluster permissions (follows deploy/all-in-one.yaml)
+- ✅ Deployment: Management controller with metrics service
 - ✅ Image: `lehuannhatrang/stateful-migration-operator:migrationBackup_<VERSION>`
 
 ### Features

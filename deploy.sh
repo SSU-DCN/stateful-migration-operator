@@ -41,7 +41,7 @@ print_step() {
 
 # Configuration
 NAMESPACE="stateful-migration"
-OPERATOR_NAMESPACE="stateful-migration-operator-system"
+OPERATOR_NAMESPACE="stateful-migration"
 DEFAULT_VERSION="v1.16"
 DOCKERHUB_USERNAME="lehuannhatrang"
 REPOSITORY_NAME="stateful-migration-operator"
@@ -225,88 +225,73 @@ deploy_migration_controller() {
     
     local image_name="${DOCKERHUB_USERNAME}/${REPOSITORY_NAME}:migrationBackup_${VERSION}"
     
-    print_step "Creating operator namespace..."
-    execute_kubectl "$MGMT_KUBECONFIG" create namespace "$OPERATOR_NAMESPACE" --dry-run=client -o yaml | \
-        execute_kubectl "$MGMT_KUBECONFIG" apply -f -
+    print_step "Checking cluster connectivity..."
+    if ! execute_kubectl "$MGMT_KUBECONFIG" cluster-info >/dev/null 2>&1; then
+        print_error "Cannot connect to management cluster"
+        return 1
+    fi
+    print_success "Connected to cluster: $(execute_kubectl "$MGMT_KUBECONFIG" config current-context 2>/dev/null || echo "current context")"
     
-    print_step "Applying CRDs..."
-    execute_kubectl "$MGMT_KUBECONFIG" apply -f config/crd/bases/
+    print_step "Checking if required CRDs exist..."
+    local missing_crds=()
     
-    print_step "Applying RBAC..."
-    execute_kubectl "$MGMT_KUBECONFIG" apply -f config/rbac/migration_controller_rbac.yaml
+    if ! execute_kubectl "$MGMT_KUBECONFIG" get crd statefulmigrations.migration.dcnlab.com >/dev/null 2>&1; then
+        missing_crds+=("statefulmigrations.migration.dcnlab.com")
+    fi
     
-    print_step "Deploying MigrationBackup controller..."
+    if ! execute_kubectl "$MGMT_KUBECONFIG" get crd checkpointbackups.migration.dcnlab.com >/dev/null 2>&1; then
+        missing_crds+=("checkpointbackups.migration.dcnlab.com")
+    fi
     
-    # Create deployment manifest
-    cat > /tmp/migration-controller-deployment.yaml <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: migration-backup-controller
-  namespace: $OPERATOR_NAMESPACE
-  labels:
-    app.kubernetes.io/name: migration-backup-controller
-    app.kubernetes.io/part-of: stateful-migration-operator
-    control-plane: controller-manager
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      control-plane: controller-manager
-  template:
-    metadata:
-      labels:
-        control-plane: controller-manager
-    spec:
-      serviceAccountName: controller-manager
-      containers:
-      - name: manager
-        image: $image_name
-        command:
-        - /manager
-        args:
-        - --leader-elect
-        - --metrics-bind-address=0.0.0.0:8080
-        - --health-probe-bind-address=0.0.0.0:8081
-        - --enable-checkpoint-backup-controller=false
-        - --enable-migration-backup-controller=true
-        - --enable-migration-restore-controller=true
-        ports:
-        - containerPort: 8080
-          name: metrics
-          protocol: TCP
-        - containerPort: 8081
-          name: health
-          protocol: TCP
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8081
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        resources:
-          limits:
-            cpu: 500m
-            memory: 128Mi
-          requests:
-            cpu: 10m
-            memory: 64Mi
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          runAsNonRoot: true
-EOF
+    if [[ ${#missing_crds[@]} -gt 0 ]]; then
+        print_warning "Missing CRDs: ${missing_crds[*]}"
+        print_step "Installing CRDs..."
+        execute_kubectl "$MGMT_KUBECONFIG" apply -f config/crd/bases/
+        print_success "CRDs installed from project"
+    else
+        print_success "All required CRDs found"
+    fi
     
-    execute_kubectl "$MGMT_KUBECONFIG" apply -f /tmp/migration-controller-deployment.yaml
-    rm -f /tmp/migration-controller-deployment.yaml
+    print_step "Preparing deployment manifests..."
+    
+    # Create temporary deployment file from all-in-one template
+    local temp_file="/tmp/migration-deployment-${RANDOM}.yaml"
+    cp deploy/all-in-one.yaml "$temp_file"
+    
+    # Replace image placeholder with actual image
+    if [[ "$DRY_RUN" == false ]]; then
+        sed -i "s|YOUR_DOCKERHUB_USERNAME/stateful-migration-operator:latest|$image_name|g" "$temp_file"
+    else
+        echo "[DRY-RUN] Would replace image placeholder with: $image_name"
+    fi
+    
+    print_success "Manifests prepared with image: $image_name"
+    
+    print_step "Applying deployment manifests..."
+    if execute_kubectl "$MGMT_KUBECONFIG" apply -f "$temp_file"; then
+        print_success "Manifests applied successfully"
+    else
+        print_error "Failed to apply manifests"
+        if [[ "$DRY_RUN" == false ]]; then
+            rm -f "$temp_file"
+        fi
+        return 1
+    fi
+    
+    # Clean up temp file
+    if [[ "$DRY_RUN" == false ]]; then
+        rm -f "$temp_file"
+    fi
+    
+    if [[ "$DRY_RUN" == false ]]; then
+        print_step "Waiting for deployment to be ready..."
+        if execute_kubectl "$MGMT_KUBECONFIG" wait --for=condition=Available deployment/migration-backup-controller -n "$OPERATOR_NAMESPACE" --timeout=300s; then
+            print_success "Deployment is ready"
+        else
+            print_warning "Deployment may still be starting up"
+            print_status "Check logs with: kubectl logs -n $OPERATOR_NAMESPACE deployment/migration-backup-controller"
+        fi
+    fi
     
     print_success "MigrationBackup controller deployed successfully"
 }
@@ -572,7 +557,8 @@ show_deployment_status() {
     if [[ "$DEPLOY_MIGRATION" == true && "$DRY_RUN" == false ]]; then
         print_step "Checking MigrationBackup controller status..."
         execute_kubectl "$MGMT_KUBECONFIG" get deployment migration-backup-controller -n "$OPERATOR_NAMESPACE" -o wide || true
-        execute_kubectl "$MGMT_KUBECONFIG" get pods -n "$OPERATOR_NAMESPACE" -l control-plane=controller-manager || true
+        execute_kubectl "$MGMT_KUBECONFIG" get pods -n "$OPERATOR_NAMESPACE" -l app.kubernetes.io/name=migration-backup-controller || true
+        execute_kubectl "$MGMT_KUBECONFIG" get svc -n "$OPERATOR_NAMESPACE" migration-backup-controller-metrics || true
     fi
     
     if [[ "$DEPLOY_CHECKPOINT" == true && "$DRY_RUN" == false ]]; then
@@ -612,9 +598,18 @@ show_next_steps() {
         echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG get pods -n $OPERATOR_NAMESPACE"
         echo
         echo "2. Check controller logs:"
-        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG logs -n $OPERATOR_NAMESPACE -l control-plane=controller-manager"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG logs -n $OPERATOR_NAMESPACE deployment/migration-backup-controller -f"
         echo
-        echo "3. Create StatefulMigration resources to trigger migrations"
+        echo "3. Check StatefulMigrations:"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG get statefulmigrations -A"
+        echo
+        echo "4. Check CheckpointBackups:"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG get checkpointbackups -A"
+        echo
+        echo "5. Port forward metrics (optional):"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG port-forward -n $OPERATOR_NAMESPACE svc/migration-backup-controller-metrics 8080:8080"
+        echo
+        echo "6. Create StatefulMigration resources to trigger migrations"
     fi
     
     echo
