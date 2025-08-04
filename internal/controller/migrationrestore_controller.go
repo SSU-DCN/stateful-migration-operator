@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,14 +30,17 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	karmadapolicyv1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
 	karmadaworkv1alpha1 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha1"
 	karmadaworkv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
 	migrationv1 "github.com/lehuannhatrang/stateful-migration-operator/api/v1"
+)
+
+const (
+	// RestoreCheckInterval is the interval at which the controller checks for ResourceBinding changes
+	RestoreCheckInterval = 30 * time.Second
 )
 
 // MigrationRestoreReconciler reconciles a StatefulMigration object for restore operations
@@ -77,8 +81,8 @@ func (r *MigrationRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Skip if Karmada client is not available
 	if r.KarmadaClient == nil {
-		log.Info("Skipping restore logic - Karmada client not available")
-		return ctrl.Result{}, nil
+		log.Info("Skipping restore logic - Karmada client not available, will retry")
+		return ctrl.Result{RequeueAfter: RestoreCheckInterval}, nil
 	}
 
 	// Process each source cluster
@@ -89,7 +93,10 @@ func (r *MigrationRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
-	return ctrl.Result{}, nil
+	// Requeue periodically to check for ResourceBinding changes
+	// Since ResourceBinding resources exist in Karmada control plane and we can't watch them
+	// from the management cluster, we need to poll periodically
+	return ctrl.Result{RequeueAfter: RestoreCheckInterval}, nil
 }
 
 // processSourceCluster processes a single source cluster for restore operations
@@ -468,46 +475,11 @@ func (r *MigrationRestoreReconciler) updatePodContainerImages(pod *unstructured.
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *MigrationRestoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Note: We don't watch ResourceBinding resources here because they exist in the Karmada control plane,
+	// not in the management cluster where this controller is deployed. Instead, we use the KarmadaClient
+	// to list/watch ResourceBindings when processing StatefulMigration resources.
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&migrationv1.StatefulMigration{}).
-		Watches(
-			&karmadaworkv1alpha2.ResourceBinding{},
-			handler.EnqueueRequestsFromMapFunc(r.mapResourceBindingToStatefulMigration),
-		).
 		Named("migrationrestore").
 		Complete(r)
-}
-
-// mapResourceBindingToStatefulMigration maps ResourceBinding events to StatefulMigration reconciliations
-func (r *MigrationRestoreReconciler) mapResourceBindingToStatefulMigration(ctx context.Context, obj client.Object) []reconcile.Request {
-	log := log.FromContext(ctx)
-
-	// List all StatefulMigration resources
-	var statefulMigrations migrationv1.StatefulMigrationList
-	if err := r.List(ctx, &statefulMigrations); err != nil {
-		log.Error(err, "failed to list StatefulMigration resources")
-		return nil
-	}
-
-	var requests []reconcile.Request
-	for _, statefulMigration := range statefulMigrations.Items {
-		// Check if this StatefulMigration is affected by the ResourceBinding change
-		if r.isStatefulMigrationAffectedByBinding(&statefulMigration, obj) {
-			requests = append(requests, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      statefulMigration.Name,
-					Namespace: statefulMigration.Namespace,
-				},
-			})
-		}
-	}
-
-	return requests
-}
-
-// isStatefulMigrationAffectedByBinding checks if a StatefulMigration is affected by a ResourceBinding change
-func (r *MigrationRestoreReconciler) isStatefulMigrationAffectedByBinding(statefulMigration *migrationv1.StatefulMigration, binding client.Object) bool {
-	// Check if the binding is for the resource referenced by the StatefulMigration
-	// This is a simplified check - in a real implementation, you might want to be more specific
-	return true
 }

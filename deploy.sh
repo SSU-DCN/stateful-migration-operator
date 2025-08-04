@@ -496,6 +496,10 @@ spec:
         env:
         - name: KARMADA_KUBECONFIG
           value: "/etc/karmada/kubeconfig"
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         volumeMounts:
         - name: karmada-kubeconfig
           mountPath: /etc/karmada
@@ -523,7 +527,9 @@ spec:
       - name: karmada-kubeconfig
         secret:
           secretName: karmada-kubeconfig
-          optional: true
+          items:
+          - key: kubeconfig
+            path: kubeconfig
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -1008,6 +1014,9 @@ show_next_steps() {
         echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG get resourcebindings -A"
         echo
         echo "6. The controller will automatically trigger restores when source clusters become unavailable"
+        echo
+        echo "🔧 Important: MigrationRestore controller requires Karmada kubeconfig to watch ResourceBindings."
+        echo "   Ensure 'karmada-kubeconfig' secret exists in the namespace with the kubeconfig key."
     fi
     
     echo
