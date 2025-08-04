@@ -55,6 +55,7 @@ rules:
   - migration.dcnlab.com
   resources:
   - checkpointbackups
+  - checkpointrestores
   - statefulmigrations
   verbs:
   - create
@@ -80,3 +81,33 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - policy.karmada.io
+  resources:
+  - propagationpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - work.karmada.io
+  resources:
+  - resourcebindings
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - work.karmada.io
+  resources:
+  - works
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch

@@ -43,16 +43,19 @@ REPOSITORY_NAME="stateful-migration-operator"
 declare -A CONTROLLERS=(
     ["checkpoint"]="checkpointBackup_${VERSION}"
     ["migration"]="migrationBackup_${VERSION}"
+    ["restore"]="migrationRestore_${VERSION}"
 )
 
 declare -A CONTROLLER_FLAGS=(
     ["checkpoint"]="--enable-checkpoint-backup-controller=true --enable-migration-backup-controller=false --enable-migration-restore-controller=false"
-    ["migration"]="--enable-checkpoint-backup-controller=false --enable-migration-backup-controller=true --enable-migration-restore-controller=true"
+    ["migration"]="--enable-checkpoint-backup-controller=false --enable-migration-backup-controller=true --enable-migration-restore-controller=false"
+    ["restore"]="--enable-checkpoint-backup-controller=false --enable-migration-backup-controller=false --enable-migration-restore-controller=true"
 )
 
 declare -A CONTROLLER_DESCRIPTIONS=(
     ["checkpoint"]="CheckpointBackup Controller (DaemonSet for member clusters)"
     ["migration"]="MigrationBackup Controller (Karmada control plane)"
+    ["restore"]="MigrationRestore Controller (Karmada control plane)"
 )
 
 # Function to show usage
@@ -67,8 +70,9 @@ show_usage() {
     echo "  version          - Version tag for images (default: v1.16)"
     echo
     echo "Controller types:"
-    echo "  checkpoint    - Build CheckpointBackup controller only"
-    echo "  migration     - Build MigrationBackup controller only"
+    echo "  checkpoint    - Build CheckpointBackup controller only (for member clusters)"
+    echo "  migration     - Build MigrationBackup controller only (for Karmada control plane)"
+    echo "  restore       - Build MigrationRestore controller only (for Karmada control plane)"
     echo "  all           - Build all controllers (default)"
     echo
     echo "Examples:"
@@ -78,10 +82,12 @@ show_usage() {
     echo "  $0 checkpoint             # Build only CheckpointBackup controller"
     echo "  $0 checkpoint v2.0        # Build CheckpointBackup with version v2.0"
     echo "  $0 migration v1.18        # Build MigrationBackup with version v1.18"
+    echo "  $0 restore v1.18          # Build MigrationRestore with version v1.18"
     echo
     echo "Built images will be:"
     echo "  ${DOCKERHUB_USERNAME}/${REPOSITORY_NAME}:checkpointBackup_${VERSION}"
     echo "  ${DOCKERHUB_USERNAME}/${REPOSITORY_NAME}:migrationBackup_${VERSION}"
+    echo "  ${DOCKERHUB_USERNAME}/${REPOSITORY_NAME}:migrationRestore_${VERSION}"
 }
 
 # Function to check prerequisites
@@ -231,7 +237,7 @@ USER nonroot
 ENTRYPOINT ["/manager", ${flag_array}]
 EOF
     else
-        # MigrationBackup controller uses distroless (minimal)
+        # MigrationBackup and MigrationRestore controllers use distroless (minimal)
         cat > ${dockerfile_name} <<EOF
 # Build the manager binary
 FROM golang:1.24-alpine AS builder
@@ -259,7 +265,7 @@ COPY internal/ internal/
 # Build with controller-specific configuration
 RUN CGO_ENABLED=0 GOOS=\${TARGETOS:-linux} GOARCH=\${TARGETARCH} go build -a -o manager cmd/main.go
 
-# Use distroless as minimal base image for MigrationBackup controller
+# Use distroless as minimal base image for MigrationBackup and MigrationRestore controllers
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /workspace/manager .
@@ -348,6 +354,9 @@ show_summary() {
     echo "For MigrationBackup controller (Karmada):"
     echo "  make deploy IMG=${DOCKERHUB_USERNAME}/${REPOSITORY_NAME}:migrationBackup_${VERSION}"
     echo
+    echo "For MigrationRestore controller (Karmada):"
+    echo "  make deploy IMG=${DOCKERHUB_USERNAME}/${REPOSITORY_NAME}:migrationRestore_${VERSION}"
+    echo
 }
 
 # Function to create deployment examples
@@ -422,7 +431,45 @@ spec:
             memory: 64Mi
 EOF
 
-    print_success "Created deployment examples: checkpoint-deploy-example.yaml, migration-deploy-example.yaml"
+    # MigrationRestore deployment example
+    cat > restore-deploy-example.yaml <<EOF
+# Example deployment for MigrationRestore controller
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: migration-restore-controller
+  namespace: stateful-migration-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      control-plane: restore-controller-manager
+  template:
+    metadata:
+      labels:
+        control-plane: restore-controller-manager
+    spec:
+      containers:
+      - name: manager
+        image: ${DOCKERHUB_USERNAME}/${REPOSITORY_NAME}:migrationRestore_${VERSION}
+        command:
+        - /manager
+        args:
+        - --leader-elect
+        - --metrics-bind-address=0.0.0.0:8080
+        ports:
+        - containerPort: 8080
+          name: metrics
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+EOF
+
+    print_success "Created deployment examples: checkpoint-deploy-example.yaml, migration-deploy-example.yaml, restore-deploy-example.yaml"
 }
 
 # Main execution
@@ -436,6 +483,7 @@ main() {
     # Update controller tags with the provided version
     CONTROLLERS["checkpoint"]="checkpointBackup_${VERSION}"
     CONTROLLERS["migration"]="migrationBackup_${VERSION}"
+    CONTROLLERS["restore"]="migrationRestore_${VERSION}"
     
     # Initialize build summary
     rm -f /tmp/built_images.txt
@@ -449,7 +497,7 @@ main() {
     echo
     
     # Validate input
-    if [[ "$controller_type" != "all" && "$controller_type" != "checkpoint" && "$controller_type" != "migration" ]]; then
+    if [[ "$controller_type" != "all" && "$controller_type" != "checkpoint" && "$controller_type" != "migration" && "$controller_type" != "restore" ]]; then
         print_error "Invalid controller type: $controller_type"
         echo
         show_usage
@@ -466,11 +514,11 @@ main() {
     case "$controller_type" in
         "all")
             print_status "Building all controllers..."
-            for controller in "checkpoint" "migration"; do
+            for controller in "checkpoint" "migration" "restore"; do
                 build_and_push_controller "$controller"
             done
             ;;
-        "checkpoint"|"migration")
+        "checkpoint"|"migration"|"restore")
             print_status "Building ${controller_type} controller..."
             build_and_push_controller "$controller_type"
             ;;

@@ -38,6 +38,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	karmadav1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
+	karmadaworkv1alpha1 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha1"
+	karmadav1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
 	migrationv1 "github.com/lehuannhatrang/stateful-migration-operator/api/v1"
 	"github.com/lehuannhatrang/stateful-migration-operator/internal/controller"
 	// +kubebuilder:scaffold:imports
@@ -53,6 +55,8 @@ func init() {
 
 	utilruntime.Must(migrationv1.AddToScheme(scheme))
 	utilruntime.Must(karmadav1alpha1.AddToScheme(scheme))
+	utilruntime.Must(karmadaworkv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(karmadav1alpha2.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -238,9 +242,18 @@ func main() {
 
 	if enableMigrationRestoreController {
 		setupLog.Info("Setting up MigrationRestore controller")
+
+		// Initialize Karmada client for the restore controller
+		karmadaClient, err := controller.NewKarmadaClient()
+		if err != nil {
+			setupLog.Error(err, "unable to create Karmada client for MigrationRestore controller")
+			os.Exit(1)
+		}
+
 		if err := (&controller.MigrationRestoreReconciler{
-			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme(),
+			Client:        mgr.GetClient(),
+			Scheme:        mgr.GetScheme(),
+			KarmadaClient: karmadaClient,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "MigrationRestore")
 			os.Exit(1)

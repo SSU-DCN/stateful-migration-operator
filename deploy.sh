@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Deployment Script for Stateful Migration Operator Controllers
-# This script deploys CheckpointBackup (member clusters via Karmada) and MigrationBackup (mgmt cluster) controllers
+# This script deploys CheckpointBackup (member clusters via Karmada), MigrationBackup (mgmt cluster), and MigrationRestore (mgmt cluster) controllers
 
 set -e
 
@@ -51,6 +51,7 @@ KARMADA_KUBECONFIG=""
 MGMT_KUBECONFIG=""
 DEPLOY_CHECKPOINT=false
 DEPLOY_MIGRATION=false
+DEPLOY_RESTORE=false
 VERSION="$DEFAULT_VERSION"
 MEMBER_CLUSTERS=()
 DRY_RUN=false
@@ -70,6 +71,7 @@ show_usage() {
     echo "Options:"
     echo "  -c, --checkpoint              Deploy CheckpointBackup controller (DaemonSet to member clusters)"
     echo "  -m, --migration               Deploy MigrationBackup controller (management cluster)"
+    echo "  -s, --restore                 Deploy MigrationRestore controller (management cluster)"
     echo "  -a, --all                     Deploy all controllers"
     echo "  -v, --version VERSION         Version tag for images (default: $DEFAULT_VERSION)"
     echo "  -k, --karmada-config PATH     Path to Karmada kubeconfig file"
@@ -90,6 +92,9 @@ show_usage() {
     echo
     echo "  # Deploy only MigrationBackup controller"
     echo "  $0 --migration --mgmt-config ~/.kube/config"
+    echo
+    echo "  # Deploy only MigrationRestore controller"
+    echo "  $0 --restore --mgmt-config ~/.kube/config"
     echo
     echo "  # Deploy with custom version and registry credentials"
     echo "  $0 --all --version v1.17 --karmada-config ~/.kube/karmada --mgmt-config ~/.kube/config --clusters cluster1,cluster2 --registry-username myuser --registry-url myregistry.com"
@@ -116,9 +121,14 @@ parse_arguments() {
                 DEPLOY_MIGRATION=true
                 shift
                 ;;
+            -s|--restore)
+                DEPLOY_RESTORE=true
+                shift
+                ;;
             -a|--all)
                 DEPLOY_CHECKPOINT=true
                 DEPLOY_MIGRATION=true
+                DEPLOY_RESTORE=true
                 shift
                 ;;
             -v|--version)
@@ -171,8 +181,8 @@ validate_prerequisites() {
     print_step "Validating prerequisites..."
     
     # Check if at least one deployment type is selected
-    if [[ "$DEPLOY_CHECKPOINT" == false && "$DEPLOY_MIGRATION" == false ]]; then
-        print_error "No deployment type selected. Use --checkpoint, --migration, or --all"
+    if [[ "$DEPLOY_CHECKPOINT" == false && "$DEPLOY_MIGRATION" == false && "$DEPLOY_RESTORE" == false ]]; then
+        print_error "No deployment type selected. Use --checkpoint, --migration, --restore, or --all"
         exit 1
     fi
     
@@ -207,9 +217,9 @@ validate_prerequisites() {
     fi
     
     # Validate MigrationBackup prerequisites
-    if [[ "$DEPLOY_MIGRATION" == true ]]; then
+    if [[ "$DEPLOY_MIGRATION" == true || "$DEPLOY_RESTORE" == true ]]; then
         if [[ -z "$MGMT_KUBECONFIG" ]]; then
-            print_error "Management cluster kubeconfig is required for MigrationBackup deployment (--mgmt-config)"
+            print_error "Management cluster kubeconfig is required for MigrationBackup/MigrationRestore deployment (--mgmt-config)"
             exit 1
         fi
         
@@ -405,6 +415,208 @@ deploy_migration_controller() {
     fi
     
     print_success "MigrationBackup controller deployed successfully"
+}
+
+# Deploy MigrationRestore controller to management cluster
+deploy_restore_controller() {
+    print_header "Deploying MigrationRestore Controller to Management Cluster"
+    
+    local image_name="${DOCKERHUB_USERNAME}/${REPOSITORY_NAME}:migrationRestore_${VERSION}"
+    
+    print_step "Checking cluster connectivity..."
+    if ! execute_kubectl "$MGMT_KUBECONFIG" cluster-info >/dev/null 2>&1; then
+        print_error "Cannot connect to management cluster"
+        return 1
+    fi
+    print_success "Connected to cluster: $(execute_kubectl "$MGMT_KUBECONFIG" config current-context 2>/dev/null || echo "current context")"
+    
+    print_step "Checking if required CRDs exist..."
+    local missing_crds=()
+    
+    if ! execute_kubectl "$MGMT_KUBECONFIG" get crd statefulmigrations.migration.dcnlab.com >/dev/null 2>&1; then
+        missing_crds+=("statefulmigrations.migration.dcnlab.com")
+    fi
+    
+    if ! execute_kubectl "$MGMT_KUBECONFIG" get crd checkpointbackups.migration.dcnlab.com >/dev/null 2>&1; then
+        missing_crds+=("checkpointbackups.migration.dcnlab.com")
+    fi
+    
+    if ! execute_kubectl "$MGMT_KUBECONFIG" get crd checkpointrestores.migration.dcnlab.com >/dev/null 2>&1; then
+        missing_crds+=("checkpointrestores.migration.dcnlab.com")
+    fi
+    
+    if [[ ${#missing_crds[@]} -gt 0 ]]; then
+        print_warning "Missing CRDs: ${missing_crds[*]}"
+        print_step "Installing CRDs..."
+        execute_kubectl "$MGMT_KUBECONFIG" apply -f config/crd/bases/
+        print_success "CRDs installed from project"
+    else
+        print_success "All required CRDs found"
+    fi
+    
+    print_step "Preparing deployment manifests..."
+    
+    # Create temporary deployment file for restore controller
+    local temp_file="/tmp/restore-deployment-${RANDOM}.yaml"
+    
+    # Create a basic deployment manifest for the restore controller
+    cat > "$temp_file" <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${OPERATOR_NAMESPACE}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: migration-restore-controller
+  namespace: ${OPERATOR_NAMESPACE}
+  labels:
+    app.kubernetes.io/name: migration-restore-controller
+    app.kubernetes.io/component: controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: migration-restore-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: migration-restore-controller
+    spec:
+      serviceAccountName: migration-restore-controller
+      containers:
+      - name: manager
+        image: ${image_name}
+        ports:
+        - containerPort: 8080
+          name: metrics
+        - containerPort: 9443
+          name: webhook-server
+        env:
+        - name: KARMADA_KUBECONFIG
+          value: "/etc/karmada/kubeconfig"
+        volumeMounts:
+        - name: karmada-kubeconfig
+          mountPath: /etc/karmada
+          readOnly: true
+        resources:
+          limits:
+            cpu: 500m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: karmada-kubeconfig
+        secret:
+          secretName: karmada-kubeconfig
+          optional: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: migration-restore-controller
+  namespace: ${OPERATOR_NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: migration-restore-controller
+rules:
+- apiGroups:
+  - migration.dcnlab.com
+  resources:
+  - statefulmigrations
+  - checkpointbackups
+  - checkpointrestores
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - work.karmada.io
+  resources:
+  - resourcebindings
+  - works
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
+  - policy.karmada.io
+  resources:
+  - propagationpolicies
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: migration-restore-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: migration-restore-controller
+subjects:
+- kind: ServiceAccount
+  name: migration-restore-controller
+  namespace: ${OPERATOR_NAMESPACE}
+EOF
+    
+    print_success "Manifests prepared with image: $image_name"
+    
+    print_step "Applying deployment manifests..."
+    if execute_kubectl "$MGMT_KUBECONFIG" apply -f "$temp_file"; then
+        print_success "Manifests applied successfully"
+    else
+        print_error "Failed to apply manifests"
+        if [[ "$DRY_RUN" == false ]]; then
+            rm -f "$temp_file"
+        fi
+        return 1
+    fi
+    
+    # Clean up temp file
+    if [[ "$DRY_RUN" == false ]]; then
+        rm -f "$temp_file"
+    fi
+    
+    if [[ "$DRY_RUN" == false ]]; then
+        print_step "Waiting for deployment to be ready..."
+        if execute_kubectl "$MGMT_KUBECONFIG" wait --for=condition=Available deployment/migration-restore-controller -n "$OPERATOR_NAMESPACE" --timeout=300s; then
+            print_success "Deployment is ready"
+        else
+            print_warning "Deployment may still be starting up"
+            print_status "Check logs with: kubectl logs -n $OPERATOR_NAMESPACE deployment/migration-restore-controller"
+        fi
+    fi
+    
+    print_success "MigrationRestore controller deployed successfully"
 }
 
 # Deploy CheckpointBackup controller to member clusters via Karmada
@@ -718,6 +930,12 @@ show_deployment_status() {
         execute_kubectl "$MGMT_KUBECONFIG" get svc -n "$OPERATOR_NAMESPACE" migration-backup-controller-metrics || true
     fi
     
+    if [[ "$DEPLOY_RESTORE" == true && "$DRY_RUN" == false ]]; then
+        print_step "Checking MigrationRestore controller status..."
+        execute_kubectl "$MGMT_KUBECONFIG" get deployment migration-restore-controller -n "$OPERATOR_NAMESPACE" -o wide || true
+        execute_kubectl "$MGMT_KUBECONFIG" get pods -n "$OPERATOR_NAMESPACE" -l app.kubernetes.io/name=migration-restore-controller || true
+    fi
+    
     if [[ "$DEPLOY_CHECKPOINT" == true && "$DRY_RUN" == false ]]; then
         print_step "Checking CheckpointBackup controller propagation..."
         execute_kubectl "$KARMADA_KUBECONFIG" get propagationpolicy -n "$NAMESPACE" || true
@@ -771,6 +989,27 @@ show_next_steps() {
         echo "6. Create StatefulMigration resources to trigger migrations"
     fi
     
+    if [[ "$DEPLOY_RESTORE" == true ]]; then
+        echo
+        print_status "For MigrationRestore controller:"
+        echo "1. Verify controller is running:"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG get pods -n $OPERATOR_NAMESPACE"
+        echo
+        echo "2. Check controller logs:"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG logs -n $OPERATOR_NAMESPACE deployment/migration-restore-controller -f"
+        echo
+        echo "3. Check StatefulMigrations (watches for restore triggers):"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG get statefulmigrations -A"
+        echo
+        echo "4. Check CheckpointRestores:"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG get checkpointrestores -A"
+        echo
+        echo "5. Monitor Karmada ResourceBindings for cluster changes:"
+        echo "   kubectl --kubeconfig=$MGMT_KUBECONFIG get resourcebindings -A"
+        echo
+        echo "6. The controller will automatically trigger restores when source clusters become unavailable"
+    fi
+    
     echo
     print_status "Documentation:"
     echo "- CheckpointBackup setup: config/checkpoint-backup/README.md"
@@ -793,13 +1032,14 @@ main() {
     echo "Deployment Configuration:"
     echo "  CheckpointBackup Controller: $([ "$DEPLOY_CHECKPOINT" == true ] && echo "✅ Yes" || echo "❌ No")"
     echo "  MigrationBackup Controller:  $([ "$DEPLOY_MIGRATION" == true ] && echo "✅ Yes" || echo "❌ No")"
+    echo "  MigrationRestore Controller: $([ "$DEPLOY_RESTORE" == true ] && echo "✅ Yes" || echo "❌ No")"
     echo "  Version: $VERSION"
     echo "  Dry Run: $([ "$DRY_RUN" == true ] && echo "✅ Yes" || echo "❌ No")"
     if [[ "$DEPLOY_CHECKPOINT" == true ]]; then
         echo "  Member Clusters: ${MEMBER_CLUSTERS[*]}"
         echo "  Karmada Config: $KARMADA_KUBECONFIG"
     fi
-    if [[ "$DEPLOY_MIGRATION" == true ]]; then
+    if [[ "$DEPLOY_MIGRATION" == true || "$DEPLOY_RESTORE" == true ]]; then
         echo "  Management Config: $MGMT_KUBECONFIG"
     fi
     echo
@@ -810,6 +1050,11 @@ main() {
     # Deploy controllers
     if [[ "$DEPLOY_MIGRATION" == true ]]; then
         deploy_migration_controller
+        echo
+    fi
+    
+    if [[ "$DEPLOY_RESTORE" == true ]]; then
+        deploy_restore_controller
         echo
     fi
     
