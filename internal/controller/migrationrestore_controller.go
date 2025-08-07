@@ -103,8 +103,8 @@ func (r *MigrationRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Req
 func (r *MigrationRestoreReconciler) processSourceCluster(ctx context.Context, statefulMigration *migrationv1.StatefulMigration, sourceCluster string) error {
 	log := log.FromContext(ctx)
 
-	// Find the resource binding for this resource and cluster
-	resourceBinding, err := r.findResourceBinding(ctx, statefulMigration.Spec.ResourceRef, sourceCluster)
+	// Find the resource binding for this resource (regardless of current cluster)
+	resourceBinding, err := r.findResourceBinding(ctx, statefulMigration.Spec.ResourceRef)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("Resource binding not found, skipping", "cluster", sourceCluster, "resource", statefulMigration.Spec.ResourceRef.Name)
@@ -113,17 +113,17 @@ func (r *MigrationRestoreReconciler) processSourceCluster(ctx context.Context, s
 		return fmt.Errorf("failed to find resource binding: %w", err)
 	}
 
-	// Check if the source cluster is still in the clusterAffinity
-	if r.isSourceClusterStillAvailable(resourceBinding, sourceCluster) {
-		log.Info("Source cluster is still available, no restore needed",
-			"cluster", sourceCluster,
-			"clusterAffinity", resourceBinding.Spec.Clusters)
+	// Check if the workload has moved away from the source cluster
+	if !r.hasWorkloadMovedFromSourceCluster(resourceBinding, sourceCluster) {
+		log.Info("Workload is still in source cluster, no restore needed",
+			"sourceCluster", sourceCluster,
+			"currentClusters", getClusterNames(resourceBinding.Spec.Clusters))
 		return nil
 	}
 
-	log.Info("Source cluster is no longer available, starting restore process",
-		"cluster", sourceCluster,
-		"clusterAffinity", resourceBinding.Spec.Clusters)
+	log.Info("Workload has moved away from source cluster, starting restore process",
+		"sourceCluster", sourceCluster,
+		"currentClusters", getClusterNames(resourceBinding.Spec.Clusters))
 
 	// Check if there are checkpoint backups for this resource
 	checkpointBackups, err := r.findCheckpointBackups(ctx, statefulMigration.Spec.ResourceRef, sourceCluster)
@@ -138,12 +138,12 @@ func (r *MigrationRestoreReconciler) processSourceCluster(ctx context.Context, s
 		return nil
 	}
 
-	// Start restore process
-	return r.startRestoreProcess(ctx, statefulMigration, sourceCluster, checkpointBackups)
+	// Start restore process with target cluster information
+	return r.startRestoreProcess(ctx, statefulMigration, sourceCluster, checkpointBackups, resourceBinding)
 }
 
-// findResourceBinding finds the resource binding for a specific resource and cluster
-func (r *MigrationRestoreReconciler) findResourceBinding(ctx context.Context, resourceRef migrationv1.ResourceRef, sourceCluster string) (*karmadaworkv1alpha2.ResourceBinding, error) {
+// findResourceBinding finds the resource binding for a specific resource (regardless of cluster)
+func (r *MigrationRestoreReconciler) findResourceBinding(ctx context.Context, resourceRef migrationv1.ResourceRef) (*karmadaworkv1alpha2.ResourceBinding, error) {
 	log := log.FromContext(ctx)
 
 	// List all resource bindings
@@ -152,7 +152,7 @@ func (r *MigrationRestoreReconciler) findResourceBinding(ctx context.Context, re
 		return nil, fmt.Errorf("failed to list resource bindings: %w", err)
 	}
 
-	// Find the binding that matches our resource and cluster
+	// Find the binding that matches our resource
 	for _, binding := range resourceBindings.Items {
 		// Check if this binding is for our resource
 		if binding.Spec.Resource.APIVersion == resourceRef.APIVersion &&
@@ -160,30 +160,68 @@ func (r *MigrationRestoreReconciler) findResourceBinding(ctx context.Context, re
 			binding.Spec.Resource.Name == resourceRef.Name &&
 			binding.Spec.Resource.Namespace == resourceRef.Namespace {
 
-			// Check if this binding includes our source cluster
-			for _, cluster := range binding.Spec.Clusters {
-				if cluster.Name == sourceCluster {
-					log.Info("Found resource binding",
-						"binding", binding.Name,
-						"resource", resourceRef.Name,
-						"cluster", sourceCluster)
-					return &binding, nil
-				}
-			}
+			log.Info("Found resource binding",
+				"binding", binding.Name,
+				"resource", resourceRef.Name,
+				"currentClusters", getClusterNames(binding.Spec.Clusters))
+			return &binding, nil
 		}
 	}
 
 	return nil, errors.NewNotFound(schema.GroupResource{Group: "work.karmada.io", Resource: "resourcebindings"}, "not found")
 }
 
-// isSourceClusterStillAvailable checks if the source cluster is still in the clusterAffinity
-func (r *MigrationRestoreReconciler) isSourceClusterStillAvailable(binding *karmadaworkv1alpha2.ResourceBinding, sourceCluster string) bool {
+// hasWorkloadMovedFromSourceCluster checks if the workload has moved away from the source cluster
+func (r *MigrationRestoreReconciler) hasWorkloadMovedFromSourceCluster(binding *karmadaworkv1alpha2.ResourceBinding, sourceCluster string) bool {
+	// If the source cluster is still in the current clusters, workload hasn't moved
 	for _, cluster := range binding.Spec.Clusters {
 		if cluster.Name == sourceCluster {
-			return true
+			return false // Workload is still in source cluster
 		}
 	}
-	return false
+	// Source cluster is not in current clusters, so workload has moved
+	return true
+}
+
+// getClusterNames extracts cluster names from ClusterAffinity for logging
+func getClusterNames(clusters []karmadaworkv1alpha2.TargetCluster) []string {
+	names := make([]string, len(clusters))
+	for i, cluster := range clusters {
+		names[i] = cluster.Name
+	}
+	return names
+}
+
+// clustersEqual checks if two cluster name slices are equal (order independent)
+func clustersEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	// Create maps for efficient lookup
+	mapA := make(map[string]bool)
+	mapB := make(map[string]bool)
+
+	for _, cluster := range a {
+		mapA[cluster] = true
+	}
+	for _, cluster := range b {
+		mapB[cluster] = true
+	}
+
+	// Check if all clusters in A are in B and vice versa
+	for cluster := range mapA {
+		if !mapB[cluster] {
+			return false
+		}
+	}
+	for cluster := range mapB {
+		if !mapA[cluster] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // findCheckpointBackups finds checkpoint backups for a specific resource and cluster
@@ -220,12 +258,12 @@ func (r *MigrationRestoreReconciler) findCheckpointBackups(ctx context.Context, 
 }
 
 // startRestoreProcess starts the restore process for the given resource
-func (r *MigrationRestoreReconciler) startRestoreProcess(ctx context.Context, statefulMigration *migrationv1.StatefulMigration, sourceCluster string, checkpointBackups []migrationv1.CheckpointBackup) error {
+func (r *MigrationRestoreReconciler) startRestoreProcess(ctx context.Context, statefulMigration *migrationv1.StatefulMigration, sourceCluster string, checkpointBackups []migrationv1.CheckpointBackup, resourceBinding *karmadaworkv1alpha2.ResourceBinding) error {
 	log := log.FromContext(ctx)
 
 	// Create CheckpointRestore CR for each checkpoint backup
 	for _, backup := range checkpointBackups {
-		if err := r.createCheckpointRestore(ctx, &backup, statefulMigration); err != nil {
+		if err := r.createCheckpointRestore(ctx, &backup, statefulMigration, resourceBinding); err != nil {
 			log.Error(err, "failed to create checkpoint restore", "backup", backup.Name)
 			return err
 		}
@@ -244,7 +282,7 @@ func (r *MigrationRestoreReconciler) startRestoreProcess(ctx context.Context, st
 }
 
 // createCheckpointRestore creates a CheckpointRestore CR for the given backup
-func (r *MigrationRestoreReconciler) createCheckpointRestore(ctx context.Context, backup *migrationv1.CheckpointBackup, statefulMigration *migrationv1.StatefulMigration) error {
+func (r *MigrationRestoreReconciler) createCheckpointRestore(ctx context.Context, backup *migrationv1.CheckpointBackup, statefulMigration *migrationv1.StatefulMigration, resourceBinding *karmadaworkv1alpha2.ResourceBinding) error {
 	log := log.FromContext(ctx)
 
 	restoreName := fmt.Sprintf("%s-restore", backup.Name)
@@ -257,8 +295,9 @@ func (r *MigrationRestoreReconciler) createCheckpointRestore(ctx context.Context
 	}, &existingRestore)
 
 	if err == nil {
-		log.Info("CheckpointRestore already exists", "name", restoreName)
-		return nil
+		log.Info("CheckpointRestore already exists, checking propagation policy", "name", restoreName)
+		// CheckpointRestore exists, but we need to ensure propagation policy targets correct clusters
+		return r.createRestorePropagationPolicy(ctx, &existingRestore, statefulMigration, resourceBinding)
 	}
 
 	if !errors.IsNotFound(err) {
@@ -291,24 +330,51 @@ func (r *MigrationRestoreReconciler) createCheckpointRestore(ctx context.Context
 	log.Info("Created CheckpointRestore", "name", restoreName, "backup", backup.Name)
 
 	// Create propagation policy for the restore
-	return r.createRestorePropagationPolicy(ctx, restore, statefulMigration)
+	return r.createRestorePropagationPolicy(ctx, restore, statefulMigration, resourceBinding)
 }
 
 // createRestorePropagationPolicy creates a propagation policy for the CheckpointRestore
-func (r *MigrationRestoreReconciler) createRestorePropagationPolicy(ctx context.Context, restore *migrationv1.CheckpointRestore, statefulMigration *migrationv1.StatefulMigration) error {
+func (r *MigrationRestoreReconciler) createRestorePropagationPolicy(ctx context.Context, restore *migrationv1.CheckpointRestore, statefulMigration *migrationv1.StatefulMigration, resourceBinding *karmadaworkv1alpha2.ResourceBinding) error {
 	policyName := fmt.Sprintf("%s-restore-policy", restore.Name)
 
-	// Determine target cluster (first available cluster that's not the source)
-	var targetCluster string
-	for _, cluster := range statefulMigration.Spec.SourceClusters {
-		// For now, we'll use the first cluster that's not the source
-		// In a real implementation, you might want to implement more sophisticated logic
-		targetCluster = cluster
-		break
+	// Get target clusters from the current ResourceBinding (where the workload is now)
+	targetClusters := getClusterNames(resourceBinding.Spec.Clusters)
+
+	if len(targetClusters) == 0 {
+		return fmt.Errorf("no target clusters available for restore")
 	}
 
-	if targetCluster == "" {
-		return fmt.Errorf("no target cluster available for restore")
+	log := log.FromContext(ctx)
+
+	// Check if propagation policy already exists and has correct clusters
+	var existingPolicy karmadapolicyv1alpha1.PropagationPolicy
+	err := r.KarmadaClient.Get(ctx, types.NamespacedName{
+		Name:      policyName,
+		Namespace: restore.Namespace,
+	}, &existingPolicy)
+
+	if err == nil {
+		// Policy exists, check if it targets the correct clusters
+		existingClusters := existingPolicy.Spec.Placement.ClusterAffinity.ClusterNames
+		if clustersEqual(existingClusters, targetClusters) {
+			log.Info("Propagation policy already targets correct clusters",
+				"restore", restore.Name,
+				"targetClusters", targetClusters,
+				"policy", policyName)
+			return nil
+		}
+		log.Info("Propagation policy exists but targets different clusters, updating",
+			"restore", restore.Name,
+			"existingClusters", existingClusters,
+			"newTargetClusters", targetClusters,
+			"policy", policyName)
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to check existing propagation policy: %w", err)
+	} else {
+		log.Info("Creating new propagation policy for CheckpointRestore",
+			"restore", restore.Name,
+			"targetClusters", targetClusters,
+			"policy", policyName)
 	}
 
 	policy := &karmadapolicyv1alpha1.PropagationPolicy{
@@ -326,7 +392,7 @@ func (r *MigrationRestoreReconciler) createRestorePropagationPolicy(ctx context.
 			},
 			Placement: karmadapolicyv1alpha1.Placement{
 				ClusterAffinity: &karmadapolicyv1alpha1.ClusterAffinity{
-					ClusterNames: []string{targetCluster},
+					ClusterNames: targetClusters,
 				},
 			},
 		},

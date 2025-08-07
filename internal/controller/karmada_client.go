@@ -23,6 +23,8 @@ import (
 	"strings"
 
 	karmadav1alpha1 "github.com/karmada-io/karmada/pkg/apis/policy/v1alpha1"
+	karmadaworkv1alpha1 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha1"
+	karmadaworkv1alpha2 "github.com/karmada-io/karmada/pkg/apis/work/v1alpha2"
 	migrationv1 "github.com/lehuannhatrang/stateful-migration-operator/api/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -65,7 +67,13 @@ func NewKarmadaClient() (*KarmadaClient, error) {
 		return nil, fmt.Errorf("failed to add core types to scheme: %w", err)
 	}
 	if err := karmadav1alpha1.AddToScheme(karmadaScheme); err != nil {
-		return nil, fmt.Errorf("failed to add Karmada types to scheme: %w", err)
+		return nil, fmt.Errorf("failed to add Karmada policy types to scheme: %w", err)
+	}
+	if err := karmadaworkv1alpha1.AddToScheme(karmadaScheme); err != nil {
+		return nil, fmt.Errorf("failed to add Karmada work v1alpha1 types to scheme: %w", err)
+	}
+	if err := karmadaworkv1alpha2.AddToScheme(karmadaScheme); err != nil {
+		return nil, fmt.Errorf("failed to add Karmada work v1alpha2 types to scheme: %w", err)
 	}
 	// Register our migration CRD types
 	if err := migrationv1.AddToScheme(karmadaScheme); err != nil {

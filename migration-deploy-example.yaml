@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: manager
-        image: lehuannhatrang/stateful-migration-operator:migrationBackup_v1.20
+        image: lehuannhatrang/stateful-migration-operator:migrationBackup_v1.25
         command:
         - /manager
         args:
