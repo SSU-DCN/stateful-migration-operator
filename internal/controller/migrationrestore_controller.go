@@ -484,7 +484,7 @@ func (r *MigrationRestoreReconciler) updateWorkWithCheckpointImages(ctx context.
 		// Check if this is a Pod resource
 		if obj.GetKind() == "Pod" && obj.GetAPIVersion() == "v1" {
 			// Update container images
-			if err := r.updatePodContainerImages(&obj, checkpointImages); err != nil {
+			if err := r.updatePodContainerImages(ctx, &obj, checkpointImages); err != nil {
 				log.Error(err, "failed to update pod container images", "manifestIndex", i)
 				continue
 			}
@@ -501,11 +501,16 @@ func (r *MigrationRestoreReconciler) updateWorkWithCheckpointImages(ctx context.
 	}
 
 	// Update the Work resource
+	log.Info("Updating Work resource with checkpoint images",
+		"work", work.Name,
+		"namespace", work.Namespace,
+		"checkpointBackupsCount", len(checkpointBackups),
+		"note", "imagePullPolicy not modified due to Pod update restrictions")
 	return r.KarmadaClient.Update(ctx, work)
 }
 
 // updatePodContainerImages updates container images in a Pod manifest
-func (r *MigrationRestoreReconciler) updatePodContainerImages(pod *unstructured.Unstructured, checkpointImages map[string]string) error {
+func (r *MigrationRestoreReconciler) updatePodContainerImages(ctx context.Context, pod *unstructured.Unstructured, checkpointImages map[string]string) error {
 	// Get containers from the pod spec
 	containers, found, err := unstructured.NestedSlice(pod.Object, "spec", "containers")
 	if err != nil || !found {
@@ -527,7 +532,16 @@ func (r *MigrationRestoreReconciler) updatePodContainerImages(pod *unstructured.
 		// Check if we have a checkpoint image for this container
 		if checkpointImage, exists := checkpointImages[containerName]; exists {
 			containerMap["image"] = checkpointImage
+			// Note: We don't update imagePullPolicy here because existing Pods don't allow this field to be modified
+			// The imagePullPolicy should be set during initial Pod creation, not during updates
 			containers[i] = containerMap
+
+			// Log the container update
+			log := log.FromContext(ctx)
+			log.Info("Updated container with checkpoint image",
+				"containerName", containerName,
+				"checkpointImage", checkpointImage,
+				"note", "imagePullPolicy not modified (Pod field update restriction)")
 		}
 	}
 

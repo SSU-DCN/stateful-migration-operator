@@ -20,6 +20,7 @@ spec:
   containers:
     - name: inmem-go-server
       image: lehuannhatrang/inmem-go-server:v1
+      imagePullPolicy: Always
       ports:
         - containerPort: 8080
           name: http
