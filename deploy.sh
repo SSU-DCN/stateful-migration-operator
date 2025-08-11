@@ -364,6 +364,10 @@ deploy_migration_controller() {
         missing_crds+=("checkpointbackups.migration.dcnlab.com")
     fi
     
+    if ! execute_kubectl "$MGMT_KUBECONFIG" get crd checkpointrestores.migration.dcnlab.com >/dev/null 2>&1; then
+        missing_crds+=("checkpointrestores.migration.dcnlab.com")
+    fi
+    
     if [[ ${#missing_crds[@]} -gt 0 ]]; then
         print_warning "Missing CRDs: ${missing_crds[*]}"
         print_step "Installing CRDs..."
@@ -638,6 +642,9 @@ deploy_checkpoint_controller() {
     print_step "Applying CheckpointBackup CRD to Karmada..."
     execute_kubectl "$KARMADA_KUBECONFIG" apply -f config/crd/bases/migration.dcnlab.com_checkpointbackups.yaml
     
+    print_step "Applying CheckpointRestore CRD to Karmada..."
+    execute_kubectl "$KARMADA_KUBECONFIG" apply -f config/crd/bases/migration.dcnlab.com_checkpointrestores.yaml
+    
     print_step "Creating PropagationPolicy for namespace..."
     cat > /tmp/namespace-propagation.yaml <<EOF
 apiVersion: policy.karmada.io/v1alpha1
@@ -679,6 +686,27 @@ EOF
     
     execute_kubectl "$KARMADA_KUBECONFIG" apply -f /tmp/crd-propagation.yaml
     rm -f /tmp/crd-propagation.yaml
+    
+    print_step "Creating PropagationPolicy for CheckpointRestore CRD..."
+    cat > /tmp/checkpointrestore-crd-propagation.yaml <<EOF
+apiVersion: policy.karmada.io/v1alpha1
+kind: PropagationPolicy
+metadata:
+  name: checkpointrestore-crd
+  namespace: karmada-system
+spec:
+  resourceSelectors:
+  - apiVersion: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: checkpointrestores.migration.dcnlab.com
+  placement:
+    clusterAffinity:
+      clusterNames:
+$(printf '      - %s\n' "${MEMBER_CLUSTERS[@]}")
+EOF
+    
+    execute_kubectl "$KARMADA_KUBECONFIG" apply -f /tmp/checkpointrestore-crd-propagation.yaml
+    rm -f /tmp/checkpointrestore-crd-propagation.yaml
     
     print_step "Applying RBAC to Karmada..."
     execute_kubectl "$KARMADA_KUBECONFIG" apply -f config/rbac/checkpoint_backup_rbac.yaml
