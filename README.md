@@ -61,7 +61,7 @@ The deployment script (`deploy.sh`) handles:
   --karmada-config ~/.kube/karmada \
   --mgmt-config ~/.kube/config \
   --clusters cluster1,cluster2,cluster3 \
-  --version v1.20
+  --version v2.0
 ```
 
 ### 2. Deploy Only CheckpointBackup Controller
@@ -69,14 +69,14 @@ The deployment script (`deploy.sh`) handles:
 ./deploy.sh --checkpoint \
   --karmada-config ~/.kube/karmada \
   --clusters cluster1,cluster2 \
-  --version v1.20
+  --version v2.0
 ```
 
 ### 3. Deploy Only MigrationBackup Controller
 ```bash
 ./deploy.sh --migration \
   --mgmt-config ~/.kube/config \
-  --version v1.20
+  --version v2.0
 ```
 
 ### 4. Dry Run (Preview Changes)
