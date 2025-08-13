@@ -65,6 +65,10 @@ type SecretRef struct {
 	// Name of the referenced secret
 	// +required
 	Name string `json:"name"`
+
+	// Namespace of the referenced secret
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // Registry defines registry configuration

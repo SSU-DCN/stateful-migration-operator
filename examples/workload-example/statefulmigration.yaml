@@ -41,6 +41,7 @@ spec:
     repository: lehuannhatrang/checkpoints
     secretRef:
       name: registry-secret
+      namespace: inmem-go-app
   
   # Schedule for periodic checkpoint backups (cron format)
   # Every 5 minutes for demo purposes (adjust as needed)

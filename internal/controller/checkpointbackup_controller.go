@@ -110,7 +110,7 @@ func (r *CheckpointBackupReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Initialize clients if not already done
-	if err := r.initializeClients(ctx); err != nil {
+	if err := r.initializeClients(ctx, &checkpointBackup); err != nil {
 		log.Error(err, "Failed to initialize clients")
 		return ctrl.Result{}, err
 	}
@@ -146,7 +146,7 @@ func (r *CheckpointBackupReconciler) Reconcile(ctx context.Context, req ctrl.Req
 }
 
 // initializeClients initializes the kubelet and registry clients
-func (r *CheckpointBackupReconciler) initializeClients(ctx context.Context) error {
+func (r *CheckpointBackupReconciler) initializeClients(ctx context.Context, backup *migrationv1.CheckpointBackup) error {
 	if r.KubeletClient == nil {
 		kubeletClient, err := NewKubeletClient()
 		if err != nil {
@@ -156,7 +156,7 @@ func (r *CheckpointBackupReconciler) initializeClients(ctx context.Context) erro
 	}
 
 	if r.RegistryClient == nil {
-		registryClient, err := r.NewRegistryClient(ctx)
+		registryClient, err := r.NewRegistryClient(ctx, backup.Spec.Registry)
 		if err != nil {
 			return fmt.Errorf("failed to create registry client: %w", err)
 		}
@@ -201,15 +201,26 @@ func NewKubeletClient() (*KubeletClient, error) {
 	}, nil
 }
 
-// NewRegistryClient creates a new registry client
-func (r *CheckpointBackupReconciler) NewRegistryClient(ctx context.Context) (*RegistryClient, error) {
+// NewRegistryClient creates a new registry client using the registry configuration from CheckpointBackup
+func (r *CheckpointBackupReconciler) NewRegistryClient(ctx context.Context, registryConfig migrationv1.Registry) (*RegistryClient, error) {
+	// Determine secret name and namespace
+	secretName := "registry-credentials"    // default fallback
+	secretNamespace := "stateful-migration" // default fallback
+
+	if registryConfig.SecretRef != nil {
+		secretName = registryConfig.SecretRef.Name
+		if registryConfig.SecretRef.Namespace != "" {
+			secretNamespace = registryConfig.SecretRef.Namespace
+		}
+	}
+
 	// Get registry credentials from secret
 	var secret corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{
-		Name:      "registry-credentials",
-		Namespace: "stateful-migration",
+		Name:      secretName,
+		Namespace: secretNamespace,
 	}, &secret); err != nil {
-		return nil, fmt.Errorf("failed to get registry credentials secret: %w", err)
+		return nil, fmt.Errorf("failed to get registry credentials secret %s/%s: %w", secretNamespace, secretName, err)
 	}
 
 	username := string(secret.Data["username"])
@@ -217,17 +228,22 @@ func (r *CheckpointBackupReconciler) NewRegistryClient(ctx context.Context) (*Re
 	registry := string(secret.Data["registry"])
 
 	if username == "" || password == "" {
-		return nil, fmt.Errorf("registry credentials are empty")
+		return nil, fmt.Errorf("registry credentials are empty in secret %s/%s", secretNamespace, secretName)
 	}
 
-	if registry == "" {
-		registry = "docker.io" // Default to Docker Hub if no registry specified
+	// Use registry URL from configuration, fall back to secret data, then default
+	registryURL := registryConfig.URL
+	if registryURL == "" && registry != "" {
+		registryURL = registry
+	}
+	if registryURL == "" {
+		registryURL = "docker.io" // Default to Docker Hub if no registry specified
 	}
 
 	return &RegistryClient{
 		username: username,
 		password: password,
-		registry: registry,
+		registry: registryURL,
 	}, nil
 }
 
