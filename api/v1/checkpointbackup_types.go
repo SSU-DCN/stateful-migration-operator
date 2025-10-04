@@ -25,9 +25,14 @@ import (
 
 // CheckpointBackupSpec defines the desired state of CheckpointBackup
 type CheckpointBackupSpec struct {
-	// Schedule specifies the backup schedule in cron format
+	// Schedule specifies the backup schedule in cron format or "immediately" for one-time execution
 	// +required
 	Schedule string `json:"schedule"`
+
+	// StopPod specifies whether to delete the pod after checkpointing (default: false)
+	// When true, the pod will be deleted after successful checkpoint creation and no further schedules will be processed
+	// +optional
+	StopPod *bool `json:"stopPod,omitempty"`
 
 	// PodRef specifies the pod to checkpoint
 	// +required
@@ -38,8 +43,9 @@ type CheckpointBackupSpec struct {
 	ResourceRef ResourceRef `json:"resourceRef"`
 
 	// Registry specifies the registry configuration for storing checkpoints
-	// +required
-	Registry Registry `json:"registry"`
+	// If not provided, images will be built locally without pushing to a registry
+	// +optional
+	Registry *Registry `json:"registry,omitempty"`
 
 	// Containers specifies the container configurations for checkpoints
 	// +optional

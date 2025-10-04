@@ -69,8 +69,9 @@ spec:
                 - name
                 type: object
               registry:
-                description: Registry specifies the registry configuration for storing
-                  checkpoints
+                description: |-
+                  Registry specifies the registry configuration for storing checkpoints
+                  If not provided, images will be built locally without pushing to a registry
                 properties:
                   repository:
                     description: Repository path in the registry
@@ -116,10 +117,15 @@ spec:
                 type: object
               schedule:
                 description: Schedule specifies the backup schedule in cron format
+                  or "immediately" for one-time execution
                 type: string
+              stopPod:
+                description: |-
+                  StopPod specifies whether to delete the pod after checkpointing (default: false)
+                  When true, the pod will be deleted after successful checkpoint creation and no further schedules will be processed
+                type: boolean
             required:
             - podRef
-            - registry
             - resourceRef
             - schedule
             type: object
