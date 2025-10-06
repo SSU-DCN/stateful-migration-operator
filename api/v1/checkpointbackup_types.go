@@ -73,6 +73,48 @@ type CheckpointBackupStatus struct {
 	// Conditions represent the latest available observations of the CheckpointBackup's current state
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// BuiltImages contains the list of checkpoint images that were successfully built
+	// +optional
+	BuiltImages []BuiltImage `json:"builtImages,omitempty"`
+
+	// CheckpointFiles contains the paths to checkpoint files that have been created
+	// +optional
+	CheckpointFiles []CheckpointFile `json:"checkpointFiles,omitempty"`
+}
+
+// CheckpointFile represents a checkpoint file that has been created
+type CheckpointFile struct {
+	// ContainerName is the name of the container that was checkpointed
+	// +required
+	ContainerName string `json:"containerName"`
+
+	// FilePath is the relative path to the checkpoint file
+	// +required
+	FilePath string `json:"filePath"`
+
+	// CheckpointTime is when the checkpoint was created
+	// +optional
+	CheckpointTime *metav1.Time `json:"checkpointTime,omitempty"`
+}
+
+// BuiltImage represents a successfully built checkpoint image
+type BuiltImage struct {
+	// ContainerName is the name of the container that was checkpointed
+	// +required
+	ContainerName string `json:"containerName"`
+
+	// ImageName is the full name of the built checkpoint image
+	// +required
+	ImageName string `json:"imageName"`
+
+	// BuildTime is when the image was built
+	// +optional
+	BuildTime *metav1.Time `json:"buildTime,omitempty"`
+
+	// Pushed indicates whether the image was pushed to a registry
+	// +optional
+	Pushed bool `json:"pushed,omitempty"`
 }
 
 // +kubebuilder:object:root=true

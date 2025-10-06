@@ -143,11 +143,74 @@ spec:
 
 ## Status Updates
 
-The controller now provides more detailed status information:
+The controller now provides detailed phase tracking throughout the checkpoint process:
 
-- **`Completed`**: Checkpoint completed successfully (existing)
-- **`CompletedPodDeleted`**: Checkpoint completed and pod deleted successfully (new)
-- **`CompletedWithError`**: Checkpoint completed but pod deletion failed (new)
+### Phase Progression
+
+1. **`Checkpointing`**: Creating checkpoint via kubelet API
+2. **`Checkpointed`**: Checkpoint file created successfully
+3. **`ImageBuilding`**: Building checkpoint image with buildah
+4. **`ImageBuilt`**: Checkpoint image built successfully
+5. **`ImagePushing`**: Pushing image to registry (only if registry configured)
+6. **`ImagePushed`**: Image pushed to registry successfully (only if registry configured)
+7. **`Completed`**: All operations completed successfully
+8. **`CompletedPodDeleted`**: Checkpoint completed and pod deleted successfully
+9. **`CompletedWithError`**: Checkpoint completed but pod deletion failed
+10. **`Failed`**: Operation failed at some step
+
+### Checkpoint Files Tracking
+
+The status includes a `checkpointFiles` array that tracks checkpoint files created for each container:
+
+```yaml
+status:
+  phase: Checkpointed
+  message: "Checkpoint created for container app-container: checkpoint-default_my-pod-app-container-2025-01-04T14:30:22Z.tar"
+  checkpointFiles:
+  - containerName: app-container
+    filePath: checkpoint-default_my-pod-app-container-2025-01-04T14:30:22Z.tar
+    checkpointTime: "2025-01-04T14:30:22Z"
+```
+
+**Resumable Operations**: If the controller restarts or crashes after checkpointing but before building images, it will:
+1. Check the status for existing checkpoint file paths
+2. Verify the files still exist on disk
+3. Skip checkpoint creation and proceed directly to image building
+4. If files are missing, recreate the checkpoints
+
+This makes the controller resilient to interruptions and avoids re-checkpointing running pods.
+
+### Built Images Tracking
+
+The status also includes a `builtImages` array that tracks all successfully built checkpoint images:
+
+```yaml
+status:
+  phase: Completed
+  message: "All containers checkpointed successfully"
+  builtImages:
+  - containerName: app-container
+    imageName: localhost/checkpoint-my-pod-app-container:20250104-143022
+    buildTime: "2025-01-04T14:30:22Z"
+    pushed: false
+  - containerName: sidecar
+    imageName: localhost/checkpoint-my-pod-sidecar:20250104-143025
+    buildTime: "2025-01-04T14:30:25Z"
+    pushed: false
+```
+
+### Checkpoint File Cleanup
+
+After successful image build and push (if registry is configured), the checkpoint tar file is automatically deleted from `/var/lib/kubelet/checkpoints/` to save disk space.
+
+### Status Update Conflict Resolution
+
+The controller implements automatic retry logic with exponential backoff to handle resource version conflicts when updating status. This ensures that status updates succeed even under concurrent operations:
+
+- Maximum 3 retry attempts per status update
+- Exponential backoff: 100ms, 200ms, 300ms
+- Automatic re-fetch of latest resource version on conflict
+- In-memory backup object kept in sync with status updates
 
 ## RBAC Changes
 
