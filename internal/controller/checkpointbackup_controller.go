@@ -1039,10 +1039,18 @@ func (rc *RegistryClient) PushImage(imageName string) error {
 		return fmt.Errorf("failed to login to registry: %w", err)
 	}
 
-	// Push image
-	cmd := exec.Command("buildah", "push", imageName)
+	// Trim http:// or https:// prefix from registry URL
+	registryURL := rc.registry
+	registryURL = strings.TrimPrefix(registryURL, "http://")
+	registryURL = strings.TrimPrefix(registryURL, "https://")
+
+	// Construct destination image: <registry>/<image-name>
+	destinationImage := registryURL + "/" + imageName
+
+	// Push image: buildah push <local-image> <destination-image>
+	cmd := exec.Command("buildah", "push", imageName, destinationImage)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to push image %s: %w", imageName, err)
+		return fmt.Errorf("failed to push image %s to %s: %w", imageName, destinationImage, err)
 	}
 
 	return nil
@@ -1053,10 +1061,15 @@ func (rc *RegistryClient) login(imageName string) error {
 	// Use the registry URL from the secret (not extracted from image name)
 	// For Docker Hub, this should be "docker.io" or can be empty
 
+	// Trim http:// or https:// prefix from registry URL
+	registryURL := rc.registry
+	registryURL = strings.TrimPrefix(registryURL, "http://")
+	registryURL = strings.TrimPrefix(registryURL, "https://")
+
 	// Login using buildah
-	cmd := exec.Command("buildah", "login", "-u", rc.username, "-p", rc.password, rc.registry)
+	cmd := exec.Command("buildah", "login", "-u", rc.username, "-p", rc.password, registryURL)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to login to registry %s: %w", rc.registry, err)
+		return fmt.Errorf("failed to login to registry %s: %w", registryURL, err)
 	}
 
 	return nil
