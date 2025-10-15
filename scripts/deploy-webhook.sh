@@ -27,7 +27,7 @@ fi
 
 # Check if admission controllers are enabled
 echo "🔍 Checking if admission controllers are enabled..."
-if kubectl api-resources | grep -q "mutatingadmissionwebhookconfigurations"; then
+if kubectl api-resources | grep -q "mutatingwebhookconfigurations"; then
     echo "✅ MutatingAdmissionWebhookConfiguration API is available"
 else
     echo "❌ MutatingAdmissionWebhookConfiguration API is not available"
@@ -89,7 +89,7 @@ fi
 # Check MutatingAdmissionWebhookConfiguration
 echo ""
 echo "🔗 Checking MutatingAdmissionWebhookConfiguration..."
-if kubectl get mutatingadmissionwebhookconfiguration stateful-migration-pod-mutator-alt >/dev/null 2>&1; then
+if kubectl get mutatingwebhookconfiguration stateful-migration-pod-mutator-alt >/dev/null 2>&1; then
     echo "✅ MutatingAdmissionWebhookConfiguration is registered"
 else
     echo "❌ MutatingAdmissionWebhookConfiguration is not registered"

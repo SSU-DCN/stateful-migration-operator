@@ -193,7 +193,7 @@ INFO    pod-mutator     Applying image patches {"patches": "[{\"op\":\"replace\"
 ### Common Issues
 
 1. **Webhook not intercepting pods**:
-   - Check MutatingAdmissionWebhookConfiguration registration: `kubectl get mutatingadmissionwebhookconfigurations`
+   - Check MutatingAdmissionWebhookConfiguration registration: `kubectl get mutatingwebhookconfigurations`
    - Verify webhook service is accessible: `kubectl get svc -n stateful-migration`
    - Check certificate validity
 
@@ -211,7 +211,7 @@ INFO    pod-mutator     Applying image patches {"patches": "[{\"op\":\"replace\"
 
 ```bash
 # Check webhook configuration
-kubectl describe mutatingadmissionwebhookconfiguration stateful-migration-pod-mutator-alt
+kubectl describe mutatingwebhookconfiguration stateful-migration-pod-mutator-alt
 
 # View webhook logs with debug level
 kubectl logs -n stateful-migration -l app=stateful-migration-webhook --follow

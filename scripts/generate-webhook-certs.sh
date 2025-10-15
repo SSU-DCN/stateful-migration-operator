@@ -109,7 +109,7 @@ kubectl apply -f "$CERT_DIR/webhook-config.yaml"
 
 echo "✅ Webhook certificates generated and installed successfully!"
 echo "Secret '$SECRET_NAME' created in namespace '$NAMESPACE'"
-echo "MutatingAdmissionWebhookConfiguration '$WEBHOOK_NAME' updated with CA bundle"
+echo "MutatingWebhookConfiguration '$WEBHOOK_NAME' updated with CA bundle"
 
 # Cleanup
 rm -rf "$CERT_DIR"

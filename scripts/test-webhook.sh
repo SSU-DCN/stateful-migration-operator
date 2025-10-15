@@ -36,12 +36,12 @@ echo "✅ Found $WEBHOOK_PODS running webhook pod(s)"
 
 # Check if MutatingAdmissionWebhookConfiguration exists
 echo "🔍 Checking webhook configuration..."
-if ! kubectl get mutatingadmissionwebhookconfiguration stateful-migration-pod-mutator-alt >/dev/null 2>&1; then
-    echo "❌ MutatingAdmissionWebhookConfiguration 'stateful-migration-pod-mutator-alt' not found"
+if ! kubectl get mutatingwebhookconfiguration stateful-migration-pod-mutator-alt >/dev/null 2>&1; then
+    echo "❌ MutatingWebhookConfiguration 'stateful-migration-pod-mutator-alt' not found"
     echo "Please deploy the webhook configuration first"
     exit 1
 fi
-echo "✅ MutatingAdmissionWebhookConfiguration is registered"
+echo "✅ MutatingWebhookConfiguration is registered"
 
 echo ""
 echo "🚀 Creating test resources..."
