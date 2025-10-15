@@ -67,20 +67,21 @@ kubectl create secret tls "$SECRET_NAME" \
     --namespace="$NAMESPACE" \
     --dry-run=client -o yaml | kubectl apply -f -
 
-# Get CA bundle and update MutatingAdmissionWebhook
+# Get CA bundle and update MutatingAdmissionWebhookConfiguration
 CA_BUNDLE=$(base64 -w 0 < "$CERT_DIR/ca.crt")
 
-echo "Updating MutatingAdmissionWebhook with CA bundle..."
+echo "Updating MutatingAdmissionWebhookConfiguration with CA bundle..."
 
 # Create temporary webhook configuration with CA bundle
 cat > "$CERT_DIR/webhook-config.yaml" <<EOF
 apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingAdmissionWebhook
+kind: MutatingAdmissionWebhookConfiguration
 metadata:
   name: $WEBHOOK_NAME
   labels:
     app: stateful-migration-webhook
-spec:
+webhooks:
+- name: stateful-migration-pod-mutator.migration.dcnlab.com
   clientConfig:
     service:
       name: $SERVICE_NAME
@@ -108,7 +109,7 @@ kubectl apply -f "$CERT_DIR/webhook-config.yaml"
 
 echo "✅ Webhook certificates generated and installed successfully!"
 echo "Secret '$SECRET_NAME' created in namespace '$NAMESPACE'"
-echo "MutatingAdmissionWebhook '$WEBHOOK_NAME' updated with CA bundle"
+echo "MutatingAdmissionWebhookConfiguration '$WEBHOOK_NAME' updated with CA bundle"
 
 # Cleanup
 rm -rf "$CERT_DIR"

@@ -41,6 +41,6 @@ patchesJson6902:
 - target:
     group: admissionregistration.k8s.io
     version: v1
-    kind: MutatingAdmissionWebhook
+    kind: MutatingAdmissionWebhookConfiguration
     name: stateful-migration-pod-mutator-alt
   path: patch-ca-bundle.yaml

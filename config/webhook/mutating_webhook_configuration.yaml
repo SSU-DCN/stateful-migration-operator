@@ -1,10 +1,11 @@
 apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingAdmissionWebhook
+kind: MutatingAdmissionWebhookConfiguration
 metadata:
   name: stateful-migration-pod-mutator
   labels:
     app: stateful-migration-webhook
-spec:
+webhooks:
+- name: stateful-migration-pod-mutator.migration.dcnlab.com
   clientConfig:
     service:
       name: stateful-migration-webhook-service
@@ -25,19 +26,16 @@ spec:
     - key: name
       operator: NotIn
       values: ["kube-system", "kube-public", "kube-node-lease", "stateful-migration"]
-  objectSelector:
-    matchLabels:
-      # Only mutate pods created by Jobs
-      job-name: "*"
 ---
-# Alternative configuration if we can't use job-name label selector
+# Alternative configuration with less restrictive failure policy
 apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingAdmissionWebhook
+kind: MutatingAdmissionWebhookConfiguration
 metadata:
   name: stateful-migration-pod-mutator-alt
   labels:
     app: stateful-migration-webhook
-spec:
+webhooks:
+- name: stateful-migration-pod-mutator-alt.migration.dcnlab.com
   clientConfig:
     service:
       name: stateful-migration-webhook-service

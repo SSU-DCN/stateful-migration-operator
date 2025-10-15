@@ -25,6 +25,17 @@ if ! command_exists kubectl; then
     exit 1
 fi
 
+# Check if admission controllers are enabled
+echo "🔍 Checking if admission controllers are enabled..."
+if kubectl api-resources | grep -q "mutatingadmissionwebhookconfigurations"; then
+    echo "✅ MutatingAdmissionWebhookConfiguration API is available"
+else
+    echo "❌ MutatingAdmissionWebhookConfiguration API is not available"
+    echo "   Please ensure your Kubernetes cluster has admission controllers enabled"
+    echo "   and supports the admissionregistration.k8s.io/v1 API"
+    exit 1
+fi
+
 echo "✅ Prerequisites satisfied"
 echo ""
 
@@ -75,13 +86,13 @@ else
     kubectl get pods -n "$NAMESPACE" -l app=stateful-migration-webhook
 fi
 
-# Check MutatingAdmissionWebhook
+# Check MutatingAdmissionWebhookConfiguration
 echo ""
-echo "🔗 Checking MutatingAdmissionWebhook..."
-if kubectl get mutatingadmissionwebhook stateful-migration-pod-mutator-alt >/dev/null 2>&1; then
-    echo "✅ MutatingAdmissionWebhook is registered"
+echo "🔗 Checking MutatingAdmissionWebhookConfiguration..."
+if kubectl get mutatingadmissionwebhookconfiguration stateful-migration-pod-mutator-alt >/dev/null 2>&1; then
+    echo "✅ MutatingAdmissionWebhookConfiguration is registered"
 else
-    echo "❌ MutatingAdmissionWebhook is not registered"
+    echo "❌ MutatingAdmissionWebhookConfiguration is not registered"
     exit 1
 fi
 
@@ -93,7 +104,7 @@ echo "- Namespace: $NAMESPACE"
 echo "- Webhook Image: stateful-migration-webhook:$IMAGE_TAG"
 echo "- Webhook Pods: $WEBHOOK_PODS"
 echo "- Service: stateful-migration-webhook-service"
-echo "- MutatingAdmissionWebhook: stateful-migration-pod-mutator-alt"
+echo "- MutatingAdmissionWebhookConfiguration: stateful-migration-pod-mutator-alt"
 echo ""
 echo "📖 Next steps:"
 echo "1. Test the webhook by creating a pod from a Job that matches a CheckpointBackup resourceRef"
