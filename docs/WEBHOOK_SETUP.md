@@ -81,7 +81,7 @@ kubectl apply -f config/webhook/cert-manager.yaml
 
 ### Webhook Configuration
 
-The webhook is configured via the `MutatingAdmissionWebhookConfiguration` resource:
+The webhook is configured via the `MutatingWebhookConfiguration` resource:
 
 - **Target**: Pods created in any namespace (except system namespaces)
 - **Operations**: CREATE operations only
@@ -193,7 +193,7 @@ INFO    pod-mutator     Applying image patches {"patches": "[{\"op\":\"replace\"
 ### Common Issues
 
 1. **Webhook not intercepting pods**:
-   - Check MutatingAdmissionWebhookConfiguration registration: `kubectl get mutatingwebhookconfigurations`
+   - Check MutatingWebhookConfiguration registration: `kubectl get mutatingwebhookconfigurations`
    - Verify webhook service is accessible: `kubectl get svc -n stateful-migration`
    - Check certificate validity
 
@@ -296,7 +296,7 @@ spec:
 
 ### Custom Failure Policies
 
-Modify the MutatingAdmissionWebhookConfiguration configuration:
+Modify the MutatingWebhookConfiguration configuration:
 
 ```yaml
 spec:

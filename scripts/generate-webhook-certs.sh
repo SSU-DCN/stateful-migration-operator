@@ -67,15 +67,15 @@ kubectl create secret tls "$SECRET_NAME" \
     --namespace="$NAMESPACE" \
     --dry-run=client -o yaml | kubectl apply -f -
 
-# Get CA bundle and update MutatingAdmissionWebhookConfiguration
+# Get CA bundle and update MutatingWebhookConfiguration
 CA_BUNDLE=$(base64 -w 0 < "$CERT_DIR/ca.crt")
 
-echo "Updating MutatingAdmissionWebhookConfiguration with CA bundle..."
+echo "Updating MutatingWebhookConfiguration with CA bundle..."
 
 # Create temporary webhook configuration with CA bundle
 cat > "$CERT_DIR/webhook-config.yaml" <<EOF
 apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingAdmissionWebhookConfiguration
+kind: MutatingWebhookConfiguration
 metadata:
   name: $WEBHOOK_NAME
   labels:
