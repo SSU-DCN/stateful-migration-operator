@@ -25,11 +25,6 @@ if ! command_exists kubectl; then
     exit 1
 fi
 
-if ! command_exists docker; then
-    echo "❌ docker is required but not installed"
-    exit 1
-fi
-
 echo "✅ Prerequisites satisfied"
 echo ""
 
