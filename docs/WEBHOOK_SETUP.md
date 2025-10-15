@@ -17,7 +17,7 @@ The webhook intercepts pod creation events and:
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Kubernetes    │    │   Admission     │    │  CheckpointBackup │
 │   API Server    │───▶│   Webhook       │───▶│      CRD        │
-│                 │    │   (DaemonSet)   │    │                 │
+│                 │    │  (Deployment)   │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          ▼                       ▼                       ▼
@@ -58,7 +58,7 @@ The webhook intercepts pod creation events and:
 3. **Deploy the components**:
    ```bash
    kubectl apply -f config/webhook/rbac.yaml
-   kubectl apply -f config/webhook/daemonset.yaml
+   kubectl apply -f config/webhook/deployment.yaml
    ```
 
 ### Using Cert-Manager (Alternative)
@@ -225,7 +225,7 @@ kubectl get checkpointbackups --all-namespaces -o wide
 
 ### Performance Considerations
 
-- **DaemonSet deployment**: Ensures webhook availability on all nodes
+- **Deployment with replicas**: Ensures webhook high availability with multiple replicas
 - **Failure policy**: Set to "Ignore" to prevent blocking pod creation
 - **Resource limits**: Configured for minimal resource usage
 - **Leader election**: Disabled since webhook is stateless
@@ -284,14 +284,14 @@ export NAMESPACE=my-custom-namespace
 
 ### Multiple Webhook Instances
 
-For high availability, the DaemonSet ensures one webhook pod per node. You can also run multiple replicas:
+For high availability, the Deployment runs multiple replicas by default. You can adjust the replica count:
 
 ```yaml
-# In daemonset.yaml, change to Deployment
+# In deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 spec:
-  replicas: 3  # Multiple replicas for HA
+  replicas: 3  # Adjust number of replicas for HA
 ```
 
 ### Custom Failure Policies

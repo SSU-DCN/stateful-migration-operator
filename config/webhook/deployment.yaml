@@ -1,5 +1,5 @@
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
   name: stateful-migration-webhook
   namespace: stateful-migration
@@ -7,6 +7,7 @@ metadata:
     app: stateful-migration-webhook
     control-plane: webhook-server
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: stateful-migration-webhook
@@ -23,9 +24,9 @@ spec:
         fsGroup: 65532
       serviceAccountName: stateful-migration-webhook
       containers:
-      - name: webhook
-        image: docker.io/lehuannhatrang/stateful-migration-webhook:v1.0
-        imagePullPolicy: IfNotPresent
+        - name: webhook
+          image: docker.io/lehuannhatrang/stateful-migration-webhook:v1.0
+          imagePullPolicy: Never
         command:
         - /webhook
         args:

@@ -3,7 +3,7 @@ kind: Kustomization
 
 resources:
 - rbac.yaml
-- daemonset.yaml
+- deployment.yaml
 - mutating_webhook_configuration.yaml
 
 # Namespace for all resources

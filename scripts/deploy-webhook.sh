@@ -57,18 +57,50 @@ kubectl apply -f "$PROJECT_ROOT/config/webhook/rbac.yaml"
 echo "✅ RBAC resources deployed"
 echo ""
 
-# Deploy DaemonSet
-echo "🚢 Deploying webhook DaemonSet..."
-# Update image tag in daemonset
+# Deploy Deployment
+echo "🚢 Deploying webhook Deployment..."
+# Update image tag in deployment
 sed "s|docker.io/lehuannhatrang/stateful-migration-webhook:v1.0|docker.io/lehuannhatrang/stateful-migration-webhook:$IMAGE_TAG|g" \
-    "$PROJECT_ROOT/config/webhook/daemonset.yaml" | kubectl apply -f -
-echo "✅ DaemonSet deployed"
+    "$PROJECT_ROOT/config/webhook/deployment.yaml" | kubectl apply -f -
+echo "✅ Deployment deployed"
 echo ""
 
 # Wait for webhook to be ready
 echo "⏳ Waiting for webhook pods to be ready..."
-kubectl wait --for=condition=ready pod -l app=stateful-migration-webhook -n "$NAMESPACE" --timeout=120s
-echo "✅ Webhook pods are ready"
+echo "🔍 Checking Deployment status..."
+kubectl get deployment stateful-migration-webhook -n "$NAMESPACE"
+
+echo ""
+echo "🔍 Checking for pods..."
+kubectl get pods -n "$NAMESPACE" -l app=stateful-migration-webhook
+
+echo ""
+echo "🔍 Checking all pods in namespace..."
+kubectl get pods -n "$NAMESPACE"
+
+# Check if any pods exist before waiting
+POD_COUNT=$(kubectl get pods -n "$NAMESPACE" -l app=stateful-migration-webhook --no-headers 2>/dev/null | wc -l)
+if [ "$POD_COUNT" -eq 0 ]; then
+    echo "❌ No webhook pods found. Checking Deployment events..."
+    kubectl describe deployment stateful-migration-webhook -n "$NAMESPACE"
+    echo ""
+    echo "📋 Recent events in namespace:"
+    kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' | tail -10
+    echo ""
+    echo "⚠️  Pods may still be starting. Let's wait a bit longer..."
+    sleep 10
+    kubectl get pods -n "$NAMESPACE" -l app=stateful-migration-webhook
+fi
+
+# Try to wait for pods if they exist
+if kubectl get pods -n "$NAMESPACE" -l app=stateful-migration-webhook --no-headers 2>/dev/null | grep -q .; then
+    echo "✅ Found webhook pods, waiting for them to be ready..."
+    kubectl wait --for=condition=ready pod -l app=stateful-migration-webhook -n "$NAMESPACE" --timeout=120s
+    echo "✅ Webhook pods are ready"
+else
+    echo "⚠️  No webhook pods found yet. This might indicate an issue with the Deployment."
+    echo "    Let's continue and check the final status..."
+fi
 echo ""
 
 # Verify deployment

@@ -117,6 +117,6 @@ echo "Temporary files cleaned up"
 
 echo ""
 echo "Next steps:"
-echo "1. Deploy the webhook DaemonSet using: kubectl apply -f config/webhook/daemonset.yaml"
+echo "1. Deploy the webhook Deployment using: kubectl apply -f config/webhook/deployment.yaml"
 echo "2. Verify the webhook is running: kubectl get pods -n $NAMESPACE -l app=stateful-migration-webhook"
 echo "3. Check logs: kubectl logs -n $NAMESPACE -l app=stateful-migration-webhook --follow"
