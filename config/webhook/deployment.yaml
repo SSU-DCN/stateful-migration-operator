@@ -24,9 +24,9 @@ spec:
         fsGroup: 65532
       serviceAccountName: stateful-migration-webhook
       containers:
-        - name: webhook
-          image: docker.io/lehuannhatrang/stateful-migration-webhook:v1.0
-          imagePullPolicy: Never
+      - name: webhook
+        image: docker.io/lehuannhatrang/stateful-migration-webhook:v1.0
+        imagePullPolicy: Never
         command:
         - /webhook
         args:
