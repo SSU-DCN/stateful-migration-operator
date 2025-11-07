@@ -502,4 +502,3 @@ lehuannhatrang/stateful-migration-operator:<controller-type>_<version>
 **Where:**
 - `<controller-type>` is either `checkpointBackup` or `migrationBackup`
 - `<version>` is the version parameter you provide
-- -..
