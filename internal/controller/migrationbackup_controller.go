@@ -464,78 +464,70 @@ func (r *MigrationBackupReconciler) getPodsFromSelector(ctx context.Context, nam
         return podList.Items, nil
 }
 
-// reconcileCheckpointBackupForPod creates or updates a CheckpointBackup for a specific pod and cluster.
-func (r *MigrationBackupReconciler) reconcileCheckpointBackupForPod(
-        ctx context.Context,
-        statefulMigration *migrationv1.StatefulMigration,
-        pod *corev1.Pod,
-        cluster string,
-) error {
-        // Generate CheckpointBackup name.
-        backupName := fmt.Sprintf("%s-%s-%s", statefulMigration.Name, pod.Name, cluster)
+// reconcileCheckpointBackupForPod creates or updates a CheckpointBackup for a specific pod and cluster
+func (r *MigrationBackupReconciler) reconcileCheckpointBackupForPod(ctx context.Context, statefulMigration *migrationv1.StatefulMigration, pod *corev1.Pod, cluster string) error {
+	// Generate CheckpointBackup name
+	backupName := fmt.Sprintf("%s-%s-%s", statefulMigration.Name, pod.Name, cluster)
 
-        // Create CheckpointBackup spec.
-        backup := &migrationv1.CheckpointBackup{
-                ObjectMeta: metav1.ObjectMeta{
-                        Name:      backupName,
-                        Namespace: statefulMigration.Namespace,
-                        Labels: map[string]string{
-                                "stateful-migration": statefulMigration.Name,
-                                "target-cluster":     cluster,
-                                "target-pod":         pod.Name,
-                        },
-                },
-                Spec: migrationv1.CheckpointBackupSpec{
-                        Schedule: statefulMigration.Spec.Schedule,
-                        PodRef: migrationv1.PodRef{
-                                Namespace: pod.Namespace,
-                                Name:      pod.Name,
-                        },
-                        ResourceRef: statefulMigration.Spec.ResourceRef,
-                        Registry:    statefulMigration.Spec.Registry,
-                        Containers:  r.extractContainerInfo(pod, statefulMigration.Spec.Registry),
-                },
-        }
-        if backup.Labels == nil {
-                backup.Labels = map[string]string{}
-        }
-        backup.Labels["stateful-migration"] = statefulMigration.Name
+	// Create CheckpointBackup spec
+	backup := &migrationv1.CheckpointBackup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      backupName,
+			Namespace: statefulMigration.Namespace,
+			Labels: map[string]string{
+				"stateful-migration": statefulMigration.Name,
+				"target-cluster":     cluster,
+				"target-pod":         pod.Name,
+			},
+		},
+		Spec: migrationv1.CheckpointBackupSpec{
+			Schedule: statefulMigration.Spec.Schedule,
+			PodRef: migrationv1.PodRef{
+				Namespace: pod.Namespace,
+				Name:      pod.Name,
+			},
+			ResourceRef: statefulMigration.Spec.ResourceRef,
+			Registry:    &statefulMigration.Spec.Registry,
+			Containers:  r.extractContainerInfo(pod, statefulMigration.Spec.Registry),
+		},
+	}
 
-        // Create or update CheckpointBackup on Karmada control plane.
-        if r.KarmadaClient == nil {
-                return fmt.Errorf("Karmada client not initialized")
-        }
+	if backup.Labels == nil {
+		backup.Labels = map[string]string{}
+	}
+	backup.Labels["stateful-migration"] = statefulMigration.Name
 
-        var existingBackup migrationv1.CheckpointBackup
-        err := r.KarmadaClient.Get(ctx, types.NamespacedName{
-                Name:      backupName,
-                Namespace: statefulMigration.Namespace,
-        }, &existingBackup)
+	// Create or update CheckpointBackup on Karmada control plane (not mgmt cluster)
+	if r.KarmadaClient == nil {
+		return fmt.Errorf("Karmada client not initialized")
+	}
 
-        if apierrors.IsNotFound(err) {
-                log := logf.FromContext(ctx)
-                log.Info("Creating CheckpointBackup on Karmada",
-                        "name", backupName, "namespace", statefulMigration.Namespace, "cluster", cluster)
-                if err := r.KarmadaClient.Create(ctx, backup); err != nil {
-                        return fmt.Errorf("failed to create CheckpointBackup on Karmada: %w", err)
-                }
-                log.Info("Successfully created CheckpointBackup on Karmada", "name", backupName)
-        } else if err != nil {
-                return fmt.Errorf("failed to check CheckpointBackup on Karmada: %w", err)
-        } else {
-                // Update existing CheckpointBackup on Karmada control plane.
-                log := logf.FromContext(ctx)
-                log.Info("Updating CheckpointBackup on Karmada",
-                        "name", backupName, "namespace", statefulMigration.Namespace)
-                existingBackup.Spec = backup.Spec
-                if err := r.KarmadaClient.Update(ctx, &existingBackup); err != nil {
-                        return fmt.Errorf("failed to update CheckpointBackup on Karmada: %w", err)
-                }
-                log.Info("Successfully updated CheckpointBackup on Karmada", "name", backupName)
-        }
+	var existingBackup migrationv1.CheckpointBackup
+	err := r.KarmadaClient.Get(ctx, types.NamespacedName{Name: backupName, Namespace: statefulMigration.Namespace}, &existingBackup)
 
-        // Create Karmada PropagationPolicy to distribute CheckpointBackup to target cluster.
-        return r.createOrUpdatePropagationPolicy(ctx, backup, cluster)
+	if errors.IsNotFound(err) {
+		// Create new CheckpointBackup on Karmada control plane
+		log := logf.FromContext(ctx)
+		log.Info("Creating CheckpointBackup on Karmada", "name", backupName, "namespace", statefulMigration.Namespace, "cluster", cluster)
+		if err := r.KarmadaClient.Create(ctx, backup); err != nil {
+			return fmt.Errorf("failed to create CheckpointBackup on Karmada: %w", err)
+		}
+		log.Info("Successfully created CheckpointBackup on Karmada", "name", backupName)
+	} else if err != nil {
+		return fmt.Errorf("failed to check CheckpointBackup on Karmada: %w", err)
+	} else {
+		// Update existing CheckpointBackup on Karmada control plane
+		log := logf.FromContext(ctx)
+		log.Info("Updating CheckpointBackup on Karmada", "name", backupName, "namespace", statefulMigration.Namespace)
+		existingBackup.Spec = backup.Spec
+		if err := r.KarmadaClient.Update(ctx, &existingBackup); err != nil {
+			return fmt.Errorf("failed to update CheckpointBackup on Karmada: %w", err)
+		}
+		log.Info("Successfully updated CheckpointBackup on Karmada", "name", backupName)
+	}
+
+	// Create Karmada PropagationPolicy to distribute CheckpointBackup to target cluster
+	return r.createOrUpdatePropagationPolicy(ctx, backup, cluster)
 }
 
 // extractContainerInfo extracts container information from a pod.
