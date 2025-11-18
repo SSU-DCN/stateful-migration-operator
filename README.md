@@ -501,6 +501,7 @@ This deployment script provides a complete, production-ready solution for deploy
 ```
 lehuannhatrang/stateful-migration-operator:<controller-type>_<version>
 ```
+.
 
 **Where:**
 - `<controller-type>` is either `checkpointBackup` or `migrationBackup`
